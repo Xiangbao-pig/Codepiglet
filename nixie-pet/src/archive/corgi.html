@@ -330,10 +330,16 @@ body {
 .dog.mood-writing .heart        { display: block; }
 .dog.mood-writing .tail         { animation-duration: 80ms; }
 .dog.mood-writing .tail::before { animation-duration: 70ms; }
+.dog.mood-writing .body         { animation: body-bounce 0.25s ease-in-out infinite alternate; }
+.dog.mood-writing .legs         { animation: legs-run 0.3s ease-in-out infinite alternate; }
+@keyframes legs-run {
+    from { transform: translateY(-1px); }
+    to   { transform: translateY(1px); }
+}
 
-.dog.mood-running .body         { animation: body-bounce 0.3s ease-in-out infinite alternate; }
-.dog.mood-running .legs         { animation-duration: 0.3s; }
-.dog.mood-running .tail         { animation-duration: 120ms; }
+.dog.mood-running .body         { animation: body-bounce 0.25s ease-in-out infinite alternate; }
+.dog.mood-running .legs         { animation: legs-run 0.25s ease-in-out infinite alternate; }
+.dog.mood-running .tail         { animation-duration: 100ms; }
 @keyframes body-bounce {
     from { transform: translateY(0); }
     to   { transform: translateY(-3px); }

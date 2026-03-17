@@ -1,4 +1,4 @@
-mod corgi;
+mod nyanpig;
 mod cursor_state;
 mod git_reader;
 mod process_monitor;
@@ -37,7 +37,7 @@ fn main() {
         .with_transparent(true)
         .with_decorations(false)
         .with_always_on_top(true)
-        .with_inner_size(LogicalSize::new(140.0_f64, 155.0))
+        .with_inner_size(LogicalSize::new(170.0_f64, 120.0))
         .build(&event_loop)
         .expect("failed to build window");
 
@@ -45,7 +45,7 @@ fn main() {
 
     let webview = WebViewBuilder::new()
         .with_transparent(true)
-        .with_html(corgi::HTML)
+        .with_html(nyanpig::HTML)
         .build(&window)
         .expect("failed to build webview");
 

@@ -1,8 +1,8 @@
 # Nixie — Cursor AI Agent Desktop Pet
 
-An 8-bit pixel mole that **watches your Cursor AI agent work** and reacts in real time.
+A flying **Nyan Pig** that watches your Cursor AI agent work and reacts in real time — with mood-based skins, rainbow trails, and pixel-art speech bubbles.
 
-When the agent thinks, the mole scratches its head. When it writes code, the mole watches code stream by with wide eyes. When it runs terminal commands, the mole nervously covers its mouth. When errors appear, the mole sweats. When they're fixed, it celebrates.
+When the agent thinks, the pig turns blue with a cool-toned rainbow. When it writes code, classic rainbow trails appear. When errors hit, the pig turns angry red and shakes. When everything succeeds, it celebrates in golden glory.
 
 ## Quick Start
 
@@ -15,26 +15,29 @@ cargo run -- /path/to/your/project
 
 # (Optional) Install extension for full AI agent awareness
 cd nixie-extension && npm run compile
-# Load in Cursor via "Developer: Install Extension from Location..."
+ln -s "$(pwd)" ~/.cursor/extensions/nixie-extension
+# Reload Cursor window
 ```
 
-## Pet States
+## Pet States & Skins
 
-| State | Trigger | Mole Animation |
-|-------|---------|----------------|
-| **Idle** | No activity 30s | Stands still, looks around |
-| **UserCoding** | You're typing (small edits) | Paws alternate like digging |
-| **AgentThinking** | You stopped typing, AI processing | Scratches head, tilts |
-| **AgentWriting** | AI writing code (large multi-line edits) | Wide eyes, mouth open, code streams by |
-| **AgentRunning** | AI executing terminal commands | Paws over mouth, watches nervously |
-| **AgentSearching** | AI searching files (rapid opens) | Eyes dart left-right rapidly |
-| **Error** | Diagnostic errors present | Worried, blushing, sweat drops |
-| **Success** | Errors cleared / command succeeded | Celebrates with stars |
-| **Sleeping** | No activity 5 min | Closed eyes, floating Zzz |
+Each mood maps to a unique color palette + rainbow configuration:
+
+| State | Trigger | Skin | Rainbow |
+|-------|---------|------|---------|
+| **Idle** | No activity 30s | Classic pink | Off |
+| **UserCoding** | You're typing | Classic pink | Classic 6-color |
+| **AgentThinking** | AI processing | Blue/lavender | Cool blue gradient |
+| **AgentWriting** | AI writing code | Classic pink | Classic rainbow (fast) |
+| **AgentRunning** | AI executing commands | Orange/fire | Fire tones |
+| **AgentSearching** | AI searching files | Green/matrix | Green gradient |
+| **Error** | Diagnostic errors | Dark red | Warning fire |
+| **Success** | Errors cleared | Golden | Blue-white-red |
+| **Sleeping** | No activity 5 min | Desaturated gray | Off |
 
 ## How It Detects AI Agent vs User
 
-The core innovation: the Cursor extension **classifies each text edit** as user or AI:
+The Cursor extension **classifies each text edit** as user or AI:
 
 | Feature | User Typing | AI Agent Edit |
 |---------|-------------|---------------|
@@ -58,16 +61,17 @@ Terminal commands, rapid file opens, and diagnostic changes are tracked via VS C
 │                                                        │
 │  Writes ~/.nixie/state.json (debounced, 80ms)           │
 └────────────────────────────────────────────────────────┘
-                         ▼ file watch (notify)
-┌─ Rust Desktop Pet (egui) ─────────────────────────────┐
+                         ▼ polling (300ms interval)
+┌─ Rust Desktop Pet (wry + tao) ───────────────────────┐
 │                                                        │
 │  PetBrain.tick(native, ext) → PetMood (9 states)       │
-│  MoleRenderer.paint() → 16×18 pixel art @ 6x scale     │
+│  SVG Nyan Pig rendered in transparent webview           │
+│  CSS custom properties drive mood skins & animations    │
+│  Ark Pixel Font speech bubble for status display        │
 │  Transparent, frameless, always-on-top, draggable       │
 │                                                        │
-│  Also monitors natively (no extension needed):          │
-│  - File system activity (notify crate)                  │
-│  - Git branch/dirty (.git/HEAD + git status)            │
+│  Native monitoring (no extension needed):               │
+│  - Git branch/dirty (git status CLI)                    │
 │  - Cursor process detection (sysinfo)                   │
 └────────────────────────────────────────────────────────┘
 ```
@@ -78,19 +82,20 @@ Terminal commands, rapid file opens, and diagnostic changes are tracked via VS C
 nixie-extension/          # Cursor/VS Code extension
   src/extension.ts        # AI-aware event classification → state.json
 
-nixie-pet/                # Desktop pet (Rust + egui)
+nixie-pet/                # Desktop pet (Rust + wry/tao)
   src/
-    main.rs               # Entry point, window config
-    app.rs                # egui event loop, rendering
+    main.rs               # Entry point, wry webview + tao window
+    nyanpig.rs            # Embeds nyanpig.html via include_str!
+    nyanpig.html          # SVG pig + CSS mood skins + JS mood updates
     state.rs              # NativeState + ExtensionState + PetBrain (9 moods)
-    mole.rs               # 9×2 sprite frames, pixel art renderer
-    fs_watcher.rs         # Workspace + state file watcher (notify)
-    git_reader.rs         # Direct .git reading
+    git_reader.rs         # Git status via CLI
     process_monitor.rs    # Cursor process detection (sysinfo)
     cursor_state.rs       # Reads ~/.nixie/state.json
+  assets/                 # Ark Pixel Font (woff2, base64-embedded in HTML)
+  src/archive/            # Archived Corgi implementation
 
 docs/
-  pet-states.md           # Complete state machine design document
+  pet-states.md           # Complete state machine + skin mapping
 ```
 
 ## License

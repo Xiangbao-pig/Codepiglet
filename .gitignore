@@ -17,5 +17,8 @@ Thumbs.db
 # Nixie runtime
 ~/.nixie/
 
+# Font assets (raw files, already base64-embedded in HTML)
+nixie-pet/assets/
+
 # Firecrawl cache
 .firecrawl/
