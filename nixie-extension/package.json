@@ -1,0 +1,31 @@
+{
+  "name": "nixie",
+  "displayName": "Nixie - Desktop Pet Bridge",
+  "description": "Monitors Cursor IDE state and writes to a shared file for the Nixie desktop pet",
+  "version": "0.2.0",
+  "publisher": "nixie",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Other"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "nixie.status",
+        "title": "Nixie: Show Status"
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "lint": "eslint src --ext ts"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.3.0"
+  }
+}

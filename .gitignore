@@ -1,0 +1,21 @@
+# Rust
+target/
+nixie-pet/Cargo.lock
+
+# Node
+nixie-extension/node_modules/
+nixie-extension/out/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Nixie runtime
+~/.nixie/
+
+# Firecrawl cache
+.firecrawl/
