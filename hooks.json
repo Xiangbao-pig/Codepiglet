@@ -3,11 +3,19 @@
   "hooks": {
     "sessionStart":        [{ "command": "./hooks/nixie-hook" }],
     "sessionEnd":          [{ "command": "./hooks/nixie-hook" }],
+    "beforeSubmitPrompt":  [{ "command": "./hooks/nixie-hook" }],
     "afterAgentThought":   [{ "command": "./hooks/nixie-hook" }],
+    "afterAgentResponse":  [{ "command": "./hooks/nixie-hook" }],
     "preToolUse":          [{ "command": "./hooks/nixie-hook" }],
-    "afterFileEdit":       [{ "command": "./hooks/nixie-hook" }],
-    "afterShellExecution": [{ "command": "./hooks/nixie-hook" }],
+    "postToolUse":         [{ "command": "./hooks/nixie-hook" }],
     "postToolUseFailure":  [{ "command": "./hooks/nixie-hook" }],
+    "subagentStart":       [{ "command": "./hooks/nixie-hook" }],
+    "subagentStop":        [{ "command": "./hooks/nixie-hook" }],
+    "afterFileEdit":       [{ "command": "./hooks/nixie-hook" }],
+    "beforeReadFile":      [{ "command": "./hooks/nixie-hook" }],
+    "afterShellExecution": [{ "command": "./hooks/nixie-hook" }],
+    "afterMCPExecution":   [{ "command": "./hooks/nixie-hook" }],
+    "preCompact":          [{ "command": "./hooks/nixie-hook" }],
     "stop":                [{ "command": "./hooks/nixie-hook" }]
   }
 }

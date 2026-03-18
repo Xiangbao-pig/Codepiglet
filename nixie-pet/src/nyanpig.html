@@ -96,11 +96,14 @@ body {
 }
 
 #pet.mood-searching {
-    --body1: #116423; --body2: #15a031; --stains: #0f8b27;
-    --eyes-c: #ffffff; --ears-c: #3dbc56;
-    --snout1: #3dbc56; --snout2: #319e47; --snout-holes: #196e2a;
-    --rc1: #12a921; --rc2: #0fce22; --rc3: #0fef25;
-    --rc4: #0fef25; --rc5: #0fce22; --rc6: #12a921;
+    --body1: #f19183; --body2: #fcd8d7; --stains: #fac4b8;
+    --rainbow-opacity: 0;
+    --fly: 0.4; --fly-h: 4px;
+}
+#pet.mood-web-search {
+    --body1: #f19183; --body2: #fcd8d7; --stains: #fac4b8;
+    --rc1: #0a4d6b; --rc2: #117799; --rc3: #1ea3c4;
+    --rc4: #5bc4e0; --rc5: #a8e6f0; --rc6: #e0f7fa;
     --rainbow-opacity: 1;
     --fly: 0.4; --fly-h: 4px;
 }
@@ -119,8 +122,8 @@ body {
     --body1: #f89f39; --body2: #fdb85a; --stains: #fedda7;
     --eyes-c: #0c0b0b; --ears-c: #dc790f;
     --snout1: #ffdea1; --snout2: #fedea2; --snout-holes: #f98d0e;
-    --rc1: #2465de; --rc2: #2465de; --rc3: #ffffff;
-    --rc4: #ffffff; --rc5: #f1200d; --rc6: #f1200d;
+    --rc1: #f89f39; --rc2: #fdb85a; --rc3: #fff0b8;
+    --rc4: #fdb85a; --rc5: #f89f39; --rc6: #fff0b8;
     --rainbow-opacity: 1;
     --fly: 0.3; --fly-h: 7px;
 }
@@ -153,6 +156,22 @@ body {
     gap: 4px;
     white-space: nowrap;
     z-index: 10;
+    max-height: 80px;
+    overflow: hidden;
+    transition: opacity 0.25s ease, max-height 0.25s ease, margin 0.25s ease, padding 0.25s ease, border-width 0.25s ease;
+}
+.bubble:not(.bubble-visible) {
+    opacity: 0;
+    max-height: 0;
+    margin-bottom: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    border-width: 0;
+    pointer-events: none;
+}
+.bubble.bubble-visible .dot,
+.bubble.bubble-visible .branch {
+    display: none;
 }
 .bubble::after {
     content: '';
@@ -218,6 +237,13 @@ svg {
     0%, 100% { transform: translateX(0); }
     25% { transform: translateX(-2px); }
     75% { transform: translateX(2px); }
+}
+@keyframes jump {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-10px); }
+}
+#pet.pet-jump {
+    animation: jump 0.32s ease-out forwards;
 }
 
 #pet.mood-sleeping svg,
@@ -314,6 +340,38 @@ svg {
     animation: none;
 }
 
+.round-glasses {
+    display: none;
+    transform: translate(52px);
+}
+.round-glasses circle {
+    fill: none;
+    stroke: #1a1a1a;
+    stroke-width: 0.5;
+}
+#pet.mood-searching .round-glasses {
+    display: block;
+}
+#pet.mood-searching .eyes rect {
+    opacity: 0;
+    animation: none;
+}
+
+.sunglasses {
+    display: none;
+    transform: translate(52px);
+}
+.sunglasses rect {
+    fill: #1a1a1a;
+}
+#pet.mood-web-search .sunglasses {
+    display: block;
+}
+#pet.mood-web-search .eyes rect {
+    opacity: 0;
+    animation: none;
+}
+
 .snout {
     stroke: transparent;
     transform: translate(52px);
@@ -377,8 +435,39 @@ svg {
     0%, 100% { transform: translateY(0); opacity: 0.7; }
     50% { transform: translateY(-5px); opacity: 1; }
 }
-#pet.mood-writing .indicator-heart,
 #pet.mood-success .indicator-heart { display: block; }
+
+.indicator-codebits {
+    width: 14px;
+    height: 14px;
+    display: none;
+    font-family: 'ArkPixel', monospace;
+    font-size: 10px;
+}
+.indicator-codebits .bit {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.indicator-codebits .bit1 { opacity: 0; }
+
+#pet.mood-writing .indicator-codebits { display: block; }
+#pet.mood-writing .indicator-codebits .bit0 { animation: codebit0 0.7s steps(1) infinite; }
+#pet.mood-writing .indicator-codebits .bit1 { animation: codebit1 0.7s steps(1) infinite; }
+
+@keyframes codebit0 {
+    0%, 49% { opacity: 1; }
+    50%, 100% { opacity: 0; }
+}
+@keyframes codebit1 {
+    0%, 49% { opacity: 0; }
+    50%, 100% { opacity: 1; }
+}
 
 .indicator-bulb {
     position: absolute;
@@ -469,6 +558,15 @@ svg {
                 <rect width="1" height="1" transform="translate(12 9)" />
                 <rect width="1" height="1" transform="translate(15 9)" />
             </g>
+            <g class="round-glasses" aria-hidden="true">
+                <circle cx="12.5" cy="9.5" r="1.5" />
+                <circle cx="15.5" cy="9.5" r="1.5" />
+            </g>
+            <g class="sunglasses" aria-hidden="true">
+                <rect width="2" height="2" transform="translate(11.5 8.5)" />
+                <rect width="2" height="2" transform="translate(14.5 8.5)" />
+                <rect width="1" height="1" transform="translate(13.5 9.2)" />
+            </g>
         </g>
     </svg>
     <div class="zzz">💤</div>
@@ -481,17 +579,45 @@ svg {
             <rect x="3" y="9" width="1" height="1" fill="#888"/>
         </svg>
     </div>
+    <div class="mood-indicator indicator-codebits" aria-hidden="true">
+        <span class="bit bit0">0</span>
+        <span class="bit bit1">1</span>
+    </div>
     <div class="mood-indicator indicator-heart">❤️</div>
     <div class="mood-indicator indicator-warn">⚠️</div>
 </div>
 <script>
-function updateMood(mood, label, hasExt, branch) {
+var bubbleHideTimer = null;
+// 气泡与当前状态绑定：切换状态时旧气泡消失、显示新状态台词并重新计时 2.5s，故不一定会显示满 2.5s
+function updateMood(mood, label, hasExt, branch, quote) {
     document.getElementById('pet').className = 'mood-' + mood;
-    document.getElementById('mood-text').textContent = label;
+    document.getElementById('mood-text').textContent = quote !== undefined ? quote : label;
     var dot = document.getElementById('ext-dot');
     if (hasExt) dot.classList.add('active');
     else dot.classList.remove('active');
     document.getElementById('branch-label').textContent = branch ? ('\u23e3 ' + branch) : '';
+
+    var bubble = document.getElementById('bubble');
+    if (bubbleHideTimer) clearTimeout(bubbleHideTimer);
+    bubble.classList.add('bubble-visible');
+    bubbleHideTimer = setTimeout(function() {
+        bubble.classList.remove('bubble-visible');
+        bubbleHideTimer = null;
+    }, 2500);
+}
+// 工具成功等一次性提示：当前形态下气泡展示文案并跳跃一下（不切换状态）
+function showToast(msg) {
+    var pet = document.getElementById('pet');
+    var bubble = document.getElementById('bubble');
+    document.getElementById('mood-text').textContent = msg || '\u6267\u884c\u6210\u529f\uff01';
+    if (bubbleHideTimer) clearTimeout(bubbleHideTimer);
+    bubble.classList.add('bubble-visible');
+    pet.classList.add('pet-jump');
+    setTimeout(function() { pet.classList.remove('pet-jump'); }, 320);
+    bubbleHideTimer = setTimeout(function() {
+        bubble.classList.remove('bubble-visible');
+        bubbleHideTimer = null;
+    }, 2500);
 }
 document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('pet').className = 'mood-sleeping';

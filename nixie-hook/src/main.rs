@@ -15,6 +15,16 @@ struct HookInput {
     tool_input: Option<serde_json::Value>,
     #[serde(default)]
     status: Option<String>,
+    #[serde(default)]
+    duration: Option<u64>,
+}
+
+#[derive(Deserialize)]
+struct NixieStateRead {
+    #[serde(default)]
+    activity: String,
+    #[serde(default)]
+    session_active: bool,
 }
 
 // ── State file written for nixie-pet to consume ──
@@ -24,6 +34,12 @@ struct NixieState {
     ts: u64,
     activity: String,
     session_active: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_success_ts: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    file_edit_success_ts: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_event_duration_ms: Option<u64>,
 }
 
 // ── preToolUse / beforeShellExecution response ──
@@ -44,17 +60,48 @@ fn main() {
         Err(_) => std::process::exit(0),
     };
 
-    let (activity, session_active) = map_event(&input);
+    let t = now_ms();
+    let state = if input.hook_event_name == "postToolUse" {
+        let mut next = read_state_merge();
+        next.ts = t;
+        next.tool_success_ts = Some(t);
+        next.last_event_duration_ms = input.duration;
+        next
+    } else if input.hook_event_name == "afterFileEdit" {
+        // afterFileEdit 在某些场景（用户保存/格式化/扩展改写）会被频繁触发；
+        // 对小猪来说它更像「瞬时回执」而不是「正在写代码」。
+        // 因此这里仅触发一次 toast，并尽量保持 mood 不变（不覆盖 ts/activity）。
+        let mut next = read_state_merge();
+        next.file_edit_success_ts = Some(t);
+        next
+    } else {
+        let (activity, session_active) = map_event(&input);
+        let mut s = NixieState {
+            ts: t,
+            activity: activity.to_string(),
+            session_active,
+            tool_success_ts: None,
+            file_edit_success_ts: None,
+            last_event_duration_ms: None,
+        };
+        if let Some(d) = input.duration {
+            s.last_event_duration_ms = Some(d);
+        }
+        s
+    };
 
-    write_state(&NixieState {
-        ts: now_ms(),
-        activity: activity.to_string(),
-        session_active,
-    });
+    write_state(&state);
 
     if needs_permission_response(&input.hook_event_name) {
         let resp = AllowResponse { permission: "allow" };
         let _ = serde_json::to_writer(std::io::stdout(), &resp);
+    } else if input.hook_event_name == "beforeSubmitPrompt" {
+        #[derive(Serialize)]
+        struct SubmitResponse {
+            #[serde(rename = "continue")]
+            allow: bool,
+        }
+        let _ = serde_json::to_writer(std::io::stdout(), &SubmitResponse { allow: true });
     }
 }
 
@@ -68,17 +115,25 @@ fn map_event(input: &HookInput) -> (&'static str, bool) {
         "preToolUse" => {
             let tool = input.tool_name.as_deref().unwrap_or("");
             let activity = match tool {
-                "Read" | "Grep" | "Glob" | "SemanticSearch" => "agent_searching",
+                "Read" | "Grep" | "Glob" | "SemanticSearch" => "agent_searching", // 本地搜索
                 "Shell" => "agent_running",
                 "Write" | "StrReplace" | "Delete" | "EditNotebook" => "agent_writing",
                 "Task" => "agent_thinking",
-                _ if tool.starts_with("MCP:") => "agent_running",
+                _ if tool.starts_with("MCP:") => {
+                    let name = tool[4..].to_lowercase();
+                    if name.contains("web") || name.contains("fetch") || name.contains("firecrawl") {
+                        "agent_web_search" // 在线搜索
+                    } else {
+                        "agent_running"
+                    }
+                }
                 _ => "agent_thinking",
             };
             (activity, true)
         }
 
-        "afterFileEdit" => ("agent_writing", true),
+        // afterFileEdit 在 main() 里单独处理为「toast-only」
+        "afterFileEdit" => ("idle", true),
 
         "afterShellExecution" => ("idle", true),
 
@@ -96,8 +151,54 @@ fn map_event(input: &HookInput) -> (&'static str, bool) {
         "subagentStart" => ("agent_thinking", true),
         "subagentStop" => ("idle", true),
 
+        "beforeSubmitPrompt" => ("agent_thinking", true), // 用户刚提交对话 → 立刻进入「收到任务」
+        "afterAgentResponse" => ("agent_thinking", true),
+        "afterMCPExecution" => ("idle", true),
+        "preCompact" => ("agent_thinking", true),
+        "beforeReadFile" => ("agent_searching", true),
+
         _ => ("idle", true),
     }
+}
+
+fn read_state_merge() -> NixieState {
+    let path = nixie_dir().join("state.json");
+    let contents = match std::fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(_) => return NixieState {
+            ts: 0,
+            activity: "idle".to_string(),
+            session_active: false,
+            tool_success_ts: None,
+            file_edit_success_ts: None,
+            last_event_duration_ms: None,
+        },
+    };
+    let read: NixieStateRead = match serde_json::from_str(&contents) {
+        Ok(r) => r,
+        Err(_) => return NixieState {
+            ts: 0,
+            activity: "idle".to_string(),
+            session_active: false,
+            tool_success_ts: None,
+            file_edit_success_ts: None,
+            last_event_duration_ms: None,
+        },
+    };
+    NixieState {
+        ts: read_state_ts(&contents).unwrap_or(0),
+        activity: if read.activity.is_empty() { "idle".to_string() } else { read.activity },
+        session_active: read.session_active,
+        tool_success_ts: None,
+        file_edit_success_ts: None,
+        last_event_duration_ms: None,
+    }
+}
+
+fn read_state_ts(json: &str) -> Option<u64> {
+    #[derive(Deserialize)]
+    struct T { ts: u64 }
+    serde_json::from_str::<T>(json).ok().map(|t| t.ts)
 }
 
 fn needs_permission_response(event: &str) -> bool {

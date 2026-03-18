@@ -10,6 +10,16 @@ pub struct HookState {
     pub activity: String,
     #[serde(default)]
     pub session_active: bool,
+    /// 工具刚执行成功时由 hook 写入；pet 展示一次「执行成功」气泡+跳跃后视为已消费（按 ts 去重）。
+    #[serde(default)]
+    pub tool_success_ts: Option<u64>,
+    /// 文件编辑完成时由 hook 写入；pet 展示一次「文件完成编辑！」气泡+跳跃（按 ts 去重）。
+    #[serde(default)]
+    pub file_edit_success_ts: Option<u64>,
+    /// 可选：上次 hook 事件耗时（毫秒），如 postToolUse / afterShellExecution 的 duration。供展示或扩展用。
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub last_event_duration_ms: Option<u64>,
 }
 
 impl HookState {
