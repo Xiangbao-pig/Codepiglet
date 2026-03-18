@@ -1,4 +1,4 @@
-# Nixie — Cursor AI Agent Desktop Pet
+# Codepiglet (Nixie) — Cursor AI Agent Desktop Pet
 
 A flying **Nyan Pig** that watches your Cursor AI agent work and reacts in real time — with mood-based skins, rainbow trails, and pixel-art speech bubbles.
 
