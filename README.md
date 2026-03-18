@@ -96,6 +96,7 @@ scripts/install-hooks.sh  # One-command install script
 
 docs/
   pet-states.md           # Complete state machine + skin mapping
+  branches.md             # 分支管理约定（main / feat/xxx 流程）
 ```
 
 ## License
