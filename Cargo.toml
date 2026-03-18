@@ -1,5 +1,5 @@
 [workspace]
-members = ["nixie-pet"]
+members = ["nixie-pet", "nixie-hook"]
 resolver = "2"
 
 [profile.release]

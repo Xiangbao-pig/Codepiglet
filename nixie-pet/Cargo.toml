@@ -2,7 +2,7 @@
 name = "nixie-pet"
 version = "0.3.0"
 edition = "2021"
-description = "A desktop corgi pet that reacts to your Cursor IDE state"
+description = "A desktop Nyan Pig pet that reacts to Cursor AI agent state via Hooks"
 
 [dependencies]
 wry = { version = "0.48", features = ["transparent"] }

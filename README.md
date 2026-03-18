@@ -7,16 +7,16 @@ When the agent thinks, the pig turns blue with a cool-toned rainbow. When it wri
 ## Quick Start
 
 ```bash
-# Start the pet (watches current directory)
-cd nixie-pet && cargo run
+# 1. Install Cursor hooks (builds nixie-hook + configures ~/.cursor/hooks.json)
+./scripts/install-hooks.sh
+
+# 2. Restart Cursor to activate hooks
+
+# 3. Start the pet
+cargo run -p nixie-pet
 
 # Or specify a workspace:
-cargo run -- /path/to/your/project
-
-# (Optional) Install extension for full AI agent awareness
-cd nixie-extension && npm run compile
-ln -s "$(pwd)" ~/.cursor/extensions/nixie-extension
-# Reload Cursor window
+cargo run -p nixie-pet -- /path/to/your/project
 ```
 
 ## Pet States & Skins
@@ -26,73 +26,73 @@ Each mood maps to a unique color palette + rainbow configuration:
 | State | Trigger | Skin | Rainbow |
 |-------|---------|------|---------|
 | **Idle** | No activity 30s | Classic pink | Off |
-| **UserCoding** | You're typing | Classic pink | Classic 6-color |
-| **AgentThinking** | AI processing | Blue/lavender | Cool blue gradient |
-| **AgentWriting** | AI writing code | Classic pink | Classic rainbow (fast) |
-| **AgentRunning** | AI executing commands | Orange/fire | Fire tones |
-| **AgentSearching** | AI searching files | Green/matrix | Green gradient |
-| **Error** | Diagnostic errors | Dark red | Warning fire |
-| **Success** | Errors cleared | Golden | Blue-white-red |
+| **UserCoding** | File system activity | Classic pink | Classic 6-color |
+| **AgentThinking** | `afterAgentThought` hook | Blue/lavender | Cool blue gradient |
+| **AgentWriting** | `afterFileEdit` / `preToolUse(Write)` hook | Classic pink | Classic rainbow (fast) |
+| **AgentRunning** | `preToolUse(Shell)` hook | Orange/fire | Fire tones |
+| **AgentSearching** | `preToolUse(Read/Grep)` hook | Green/matrix | Green gradient |
+| **Error** | `postToolUseFailure` / `stop(error)` hook | Dark red | Warning fire |
+| **Success** | `stop(completed)` hook | Golden | Blue-white-red |
 | **Sleeping** | No activity 5 min | Desaturated gray | Off |
 
-## How It Detects AI Agent vs User
+## How It Works — Cursor Hooks
 
-The Cursor extension **classifies each text edit** as user or AI:
+Nixie uses [Cursor Hooks](https://cursor.com/cn/docs/hooks) to observe the AI agent lifecycle in real time. A compiled Rust binary (`nixie-hook`) runs on every hook event, maps it to a pet mood, and writes the state to `~/.nixie/state.json`. The desktop pet polls this file at 150ms intervals.
 
-| Feature | User Typing | AI Agent Edit |
-|---------|-------------|---------------|
-| Change size | 1-5 chars | 20+ chars, multi-line |
-| Pattern | Character-by-character | Block insert/replace |
-| Location | Active editor | May be non-active editor |
-
-Terminal commands, rapid file opens, and diagnostic changes are tracked via VS Code API to identify the full agent workflow.
+**No VS Code extension needed.** Hooks are 100% local, synchronous, and have zero latency.
 
 > See [`docs/pet-states.md`](docs/pet-states.md) for the complete state machine design.
 
 ## Architecture
 
 ```
-┌─ Cursor Extension (TypeScript) ───────────────────────┐
-│                                                        │
-│  classifyEdit() → "user" | "agent"                     │
-│  onDidOpenTerminal / onDidStartTerminalShellExecution   │
-│  onDidOpenTextDocument (rapid → search detection)       │
-│  onDidChangeDiagnostics                                 │
-│                                                        │
-│  Writes ~/.nixie/state.json (debounced, 80ms)           │
-└────────────────────────────────────────────────────────┘
-                         ▼ polling (300ms interval)
+┌─ Cursor Hooks (nixie-hook binary) ───────────────────┐
+│                                                       │
+│  sessionStart / sessionEnd      → session lifecycle   │
+│  afterAgentThought              → thinking detected   │
+│  preToolUse (Read/Grep/Write/Shell) → tool activity   │
+│  afterFileEdit                  → writing confirmed   │
+│  afterShellExecution            → command finished    │
+│  postToolUseFailure             → error detected      │
+│  stop (completed/error)         → session result      │
+│                                                       │
+│  Atomic write → ~/.nixie/state.json                   │
+└───────────────────────────────────────────────────────┘
+                      ▼ poll (150ms)
 ┌─ Rust Desktop Pet (wry + tao) ───────────────────────┐
-│                                                        │
-│  PetBrain.tick(native, ext) → PetMood (9 states)       │
-│  SVG Nyan Pig rendered in transparent webview           │
-│  CSS custom properties drive mood skins & animations    │
-│  Ark Pixel Font speech bubble for status display        │
-│  Transparent, frameless, always-on-top, draggable       │
-│                                                        │
-│  Native monitoring (no extension needed):               │
-│  - Git branch/dirty (git status CLI)                    │
-│  - Cursor process detection (sysinfo)                   │
-└────────────────────────────────────────────────────────┘
+│                                                       │
+│  PetBrain.tick(native, hook) → PetMood (9 states)    │
+│  SVG Nyan Pig rendered in transparent webview         │
+│  CSS custom properties drive mood skins & animations  │
+│  Ark Pixel Font speech bubble for status display      │
+│  Transparent, frameless, always-on-top, draggable     │
+│                                                       │
+│  Native monitoring (fallback when hooks inactive):    │
+│  - Git branch/dirty (git status CLI)                  │
+│  - Cursor process detection (sysinfo)                 │
+└───────────────────────────────────────────────────────┘
 ```
 
 ## Project Structure
 
 ```
-nixie-extension/          # Cursor/VS Code extension
-  src/extension.ts        # AI-aware event classification → state.json
+nixie-hook/               # Cursor hook handler (Rust binary)
+  src/main.rs             # stdin JSON → event mapping → state.json
 
 nixie-pet/                # Desktop pet (Rust + wry/tao)
   src/
     main.rs               # Entry point, wry webview + tao window
     nyanpig.rs            # Embeds nyanpig.html via include_str!
     nyanpig.html          # SVG pig + CSS mood skins + JS mood updates
-    state.rs              # NativeState + ExtensionState + PetBrain (9 moods)
+    state.rs              # NativeState + HookState + PetBrain (9 moods)
+    hook_state.rs         # Reads ~/.nixie/state.json (hook protocol)
     git_reader.rs         # Git status via CLI
     process_monitor.rs    # Cursor process detection (sysinfo)
-    cursor_state.rs       # Reads ~/.nixie/state.json
   assets/                 # Ark Pixel Font (woff2, base64-embedded in HTML)
   src/archive/            # Archived Corgi implementation
+
+hooks.json                # Cursor hooks config template
+scripts/install-hooks.sh  # One-command install script
 
 docs/
   pet-states.md           # Complete state machine + skin mapping

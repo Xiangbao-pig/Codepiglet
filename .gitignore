@@ -1,3 +1,4 @@
+# ========== 编译产物 / Build artifacts ==========
 # Rust
 target/
 nixie-pet/Cargo.lock
@@ -6,14 +7,38 @@ nixie-pet/Cargo.lock
 nixie-extension/node_modules/
 nixie-extension/out/
 
+# Generic
+dist/
+build/
+*.o
+*.so
+*.dylib
+*.dll
+*.exe
+
+# ========== 敏感信息 / Sensitive ==========
+.env
+.env.*
+.env.local
+*.pem
+*.key
+*.crt
+secrets/
+
+# ========== 系统与 IDE ==========
 # OS
 .DS_Store
 Thumbs.db
 
-# IDE
+# IDE / Editor
 .vscode/
 .idea/
+.cursor/
+*.swp
+*.swo
+*~
 
+# ========== 项目特定 ==========
 # Nixie runtime
 ~/.nixie/
 
@@ -22,3 +47,6 @@ nixie-pet/assets/
 
 # Firecrawl cache
 .firecrawl/
+
+# Runtime / logs
+*.log

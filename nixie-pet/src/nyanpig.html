@@ -34,8 +34,7 @@ body {
     align-items: center;
     position: relative;
     padding: 2px 6px 4px;
-    background: rgba(0,0,0,0.005);
-    -webkit-app-region: drag;
+    cursor: grab;
     --body1: #f19183; --body2: #fcd8d7; --stains: #fac4b8;
     --eyes-c: #0c0b0b; --ears-c: #f19183;
     --snout1: #f79197; --snout2: #f66b79; --snout-holes: #e73b36;
@@ -67,11 +66,11 @@ body {
 }
 
 #pet.mood-thinking {
-    --body1: #7b8bc4; --body2: #c5cef0; --stains: #a0aed8;
-    --eyes-c: #0c0b0b; --ears-c: #7b8bc4;
-    --snout1: #9ba8d6; --snout2: #8494c8; --snout-holes: #6272ab;
-    --rc1: #a8d4f5; --rc2: #8ec5f0; --rc3: #74b6eb;
-    --rc4: #5aa7e6; --rc5: #4098e1; --rc6: #2689dc;
+    --body1: #f19183; --body2: #fcd8d7; --stains: #fac4b8;
+    --eyes-c: #0c0b0b; --ears-c: #f19183;
+    --snout1: #f79197; --snout2: #f66b79; --snout-holes: #e73b36;
+    --rc1: #ffffff; --rc2: #ffffff; --rc3: #f0f0f0;
+    --rc4: #f0f0f0; --rc5: #ffffff; --rc6: #ffffff;
     --rainbow-opacity: 1;
     --fly: 0.8; --fly-h: 5px;
 }
@@ -380,7 +379,30 @@ svg {
 }
 #pet.mood-writing .indicator-heart,
 #pet.mood-success .indicator-heart { display: block; }
-#pet.mood-error .indicator-warn { display: block; }
+
+.indicator-bulb {
+    position: absolute;
+    top: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 14px;
+    height: 16px;
+    display: none;
+    pointer-events: none;
+    animation: bulb-blink 0.8s ease-in-out infinite;
+}
+.indicator-bulb svg {
+    width: 100%;
+    height: 100%;
+    display: block;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+}
+@keyframes bulb-blink {
+    0%, 100% { opacity: 0.4; filter: brightness(0.85); }
+    50% { opacity: 1; filter: brightness(1.15); }
+}
+#pet.mood-thinking .indicator-bulb { display: block; }
 </style>
 </head>
 <body>
@@ -450,6 +472,15 @@ svg {
         </g>
     </svg>
     <div class="zzz">💤</div>
+    <div class="mood-indicator indicator-bulb" aria-hidden="true">
+        <svg viewBox="0 0 7 10" xmlns="http://www.w3.org/2000/svg">
+            <rect x="2" y="0" width="3" height="2" fill="#fff"/>
+            <rect x="1" y="2" width="5" height="4" fill="#fff"/>
+            <rect x="0" y="6" width="7" height="1" fill="#e8e8e8"/>
+            <rect x="2" y="7" width="3" height="2" fill="#c0c0c0"/>
+            <rect x="3" y="9" width="1" height="1" fill="#888"/>
+        </svg>
+    </div>
     <div class="mood-indicator indicator-heart">❤️</div>
     <div class="mood-indicator indicator-warn">⚠️</div>
 </div>
@@ -467,6 +498,12 @@ document.addEventListener('DOMContentLoaded', function() {
     setTimeout(function() {
         document.getElementById('pet').className = 'mood-idle';
     }, 800);
+
+    document.getElementById('pet').addEventListener('mousedown', function(e) {
+        if (e.button === 0) {
+            window.ipc.postMessage('drag');
+        }
+    });
 });
 </script>
 </body>
