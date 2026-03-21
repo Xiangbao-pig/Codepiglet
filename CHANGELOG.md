@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Added
+- **Hook Phase 1**（`hook-upgrade`）：`state.json` 增加 `schema_version`、`in_flight_tools`（`tool_use_id` 配对）、`subagent_depth`、`focus_file`（basename）；宠物侧在 hook 新鲜时按在飞工具 **融合主 busy**（run > write > web > search > think），子 Agent depth 防止主线程已 idle 时误闲；气泡内 **焦点文件名** 展示（`afterFileEdit` / 写类 `preToolUse` 路径字段）
 - **Cursor Hooks 架构** — 通过 Cursor 官方 Hooks API 精确感知 AI Agent 生命周期
 - **nixie-hook 二进制** — 极轻量 Rust 二进制（~440KB），每次 hook 事件同步调用
 - **事件映射** — 8 种 hook 事件自动映射到 9 种宠物心情
@@ -11,6 +12,7 @@
 - **窗口锁定** — `with_resizable(false)` 防止透明窗口被意外调整大小
 
 ### Changed
+- **PetBrain**：去掉 Busy ↔ Busy 的 1.5s 最短停留，主状态切换更跟手（Idle 双 tick 确认仍保留）
 - **Ark Pixel 字体** — 由 HTML 内联 Base64 改为仓库内 `assets/fonts/ark-pixel-10px-monospaced-zh_cn.otf.woff2` + `OFL.txt`（解除对 `nixie-pet/assets/` 的整目录 gitignore）；经 wry `with_custom_protocol("nixie")` 加载，并 `include_bytes!` 嵌入发布二进制，他人克隆或安装包均可一致显示
 - **AI 感知层迁移** — 从"VS Code Extension + 编辑分类"迁移到"Cursor Hooks + 事件映射"
 - 状态文件协议简化为 3 字段：`ts`、`activity`、`session_active`

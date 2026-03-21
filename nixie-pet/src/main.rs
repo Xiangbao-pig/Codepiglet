@@ -34,6 +34,13 @@ struct GitUiSnapshot {
     sha: String,
 }
 
+fn escape_js_string(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', " ")
+        .replace('\r', " ")
+}
+
 fn truncate_git_tip(s: &str, max_chars: usize) -> String {
     let count = s.chars().count();
     if count <= max_chars {
@@ -78,6 +85,7 @@ enum UserEvent {
         label: &'static str,
         has_hooks: bool,
         quote: String,
+        focus_file: Option<String>,
     },
     /// 切入 Success/Error 且本帧有终端庆祝时：与 `MoodChanged` 合并为单次 `evaluate_script`，避免 WebKit 中间帧仍显示上一 mood 的彩虹/肤色。
     MoodWithCelebration {
@@ -85,9 +93,14 @@ enum UserEvent {
         label: &'static str,
         has_hooks: bool,
         quote: String,
+        focus_file: Option<String>,
         celebration_tier: &'static str,
         task_duration_ms: u64,
         is_error: bool,
+    },
+    /// 仅 `focus_file` 变化（mood 未变）时更新角标文件名。
+    FocusFileHint {
+        file: Option<String>,
     },
     /// 定时刷新：只更新 Hook 小圆点（不推 git 分支；分支见 GitTip）
     NativeHintsChanged {
@@ -189,6 +202,7 @@ fn main() {
         let mut prev_mood = PetMood::Sleeping;
         let mut tick: u64 = 0;
         let mut last_git_ui: Option<GitUiSnapshot> = None;
+        let mut last_pushed_focus: Option<String> = None;
 
         let boot_hook = hook_state::read_hook_state();
         let boot_hook_ts = boot_hook.ts;
@@ -263,12 +277,15 @@ fn main() {
                 let mood_class = mood_css_class(brain.mood);
                 let label = brain.mood.label();
                 let quote = quotes::get_random_quote(&quotes, mood_class, label);
+                let focus_file = hook.focus_file.clone();
+                last_pushed_focus = focus_file.clone();
                 if let Some((tier, task_duration_ms, is_error)) = celebration_peeled {
                     let _ = state_proxy.send_event(UserEvent::MoodWithCelebration {
                         mood_class,
                         label,
                         has_hooks: brain.has_hooks,
                         quote,
+                        focus_file,
                         celebration_tier: tier.as_str(),
                         task_duration_ms,
                         is_error,
@@ -279,9 +296,15 @@ fn main() {
                         label,
                         has_hooks: brain.has_hooks,
                         quote,
+                        focus_file,
                     });
                 }
                 prev_mood = brain.mood;
+            } else if hook.focus_file != last_pushed_focus {
+                last_pushed_focus = hook.focus_file.clone();
+                let _ = state_proxy.send_event(UserEvent::FocusFileHint {
+                    file: hook.focus_file.clone(),
+                });
             } else if tick % 60 == 0 {
                 let _ = state_proxy.send_event(UserEvent::NativeHintsChanged {
                     has_hooks: brain.has_hooks,
@@ -329,14 +352,20 @@ fn main() {
                 label,
                 has_hooks,
                 quote,
+                focus_file,
             }) => {
-                let quote_escaped = quote.replace('\\', "\\\\").replace('"', "\\\"");
+                let quote_escaped = escape_js_string(&quote);
+                let ff = focus_file
+                    .as_deref()
+                    .map(escape_js_string)
+                    .unwrap_or_default();
                 let js = format!(
-                    "updateMood('{}','{}',{},\"{}\")",
+                    "updateMood('{}','{}',{},\"{}\",\"{}\")",
                     mood_class,
                     label,
                     has_hooks,
-                    quote_escaped
+                    quote_escaped,
+                    ff
                 );
                 let _ = webview.evaluate_script(&js);
             }
@@ -345,22 +374,32 @@ fn main() {
                 label,
                 has_hooks,
                 quote,
+                focus_file,
                 celebration_tier,
                 task_duration_ms,
                 is_error,
             }) => {
-                let quote_escaped = quote.replace('\\', "\\\\").replace('"', "\\\"");
+                let quote_escaped = escape_js_string(&quote);
+                let ff = focus_file
+                    .as_deref()
+                    .map(escape_js_string)
+                    .unwrap_or_default();
                 let js = format!(
-                    "updateMoodThenApplyCelebration('{}','{}',{},\"{}\",'{}',{},{})",
+                    "updateMoodThenApplyCelebration('{}','{}',{},\"{}\",\"{}\",'{}',{},{})",
                     mood_class,
                     label,
                     has_hooks,
                     quote_escaped,
+                    ff,
                     celebration_tier,
                     task_duration_ms,
                     is_error
                 );
                 let _ = webview.evaluate_script(&js);
+            }
+            Event::UserEvent(UserEvent::FocusFileHint { file }) => {
+                let ff = file.as_deref().map(escape_js_string).unwrap_or_default();
+                let _ = webview.evaluate_script(&format!("setFocusFileHint(\"{}\")", ff));
             }
             Event::UserEvent(UserEvent::NativeHintsChanged { has_hooks }) => {
                 let _ = webview.evaluate_script(&format!("syncNativeHints({})", has_hooks));

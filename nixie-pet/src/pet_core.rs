@@ -1,4 +1,5 @@
 //! Core 层：只负责 **PetMood**（AgentThinking / Writing / …），由 Hook 驱动。
+//! Phase 1：`in_flight_tools` 融合优先于单字段 `activity`（hook 新鲜时）。
 //! 不承载庆祝、投喂、遛猪等表现逻辑——那些见 `pet_overlay`。
 
 use std::path::PathBuf;
@@ -61,11 +62,35 @@ impl PetMood {
     }
 }
 
-/// 最小展示时长（毫秒）：在「AI 忙碌」状态之间切换时，避免频繁闪烁。
-const MIN_MOOD_DURATION_MS: u64 = 1500;
-
 /// session 活跃时工具间隙仍显示 Thinking 的缓冲（毫秒）。
 const THINKING_BUFFER_MS: u64 = 3_000;
+
+/// 在飞工具簇 → 展示优先级（越大越优先）。与 hook-upgrade 文档一致：run > write > web > search > think。
+fn fusion_priority_mood(cluster: &str) -> Option<(u8, PetMood)> {
+    Some(match cluster {
+        "agent_running" => (5, PetMood::AgentRunning),
+        "agent_writing" => (4, PetMood::AgentWriting),
+        "agent_web_search" => (3, PetMood::AgentWebSearch),
+        "agent_searching" => (2, PetMood::AgentSearching),
+        "agent_thinking" => (1, PetMood::AgentThinking),
+        _ => return None,
+    })
+}
+
+fn mood_from_in_flight(hook: &HookState) -> Option<PetMood> {
+    if hook.in_flight_tools.is_empty() {
+        return None;
+    }
+    let mut best: Option<(u8, PetMood)> = None;
+    for t in &hook.in_flight_tools {
+        if let Some((p, m)) = fusion_priority_mood(&t.cluster) {
+            if best.map(|(bp, _)| p > bp).unwrap_or(true) {
+                best = Some((p, m));
+            }
+        }
+    }
+    best.map(|(_, m)| m)
+}
 
 pub struct PetBrain {
     pub mood: PetMood,
@@ -74,7 +99,6 @@ pub struct PetBrain {
 
     last_activity: Instant,
     success_until: Option<Instant>,
-    mood_changed_at: Option<Instant>,
     /// 从 AI 忙碌态切入 Idle 需连续 2 个 tick（~300ms）确认，避免 hook 抖动导致反复 Idle → 频繁刷待机台词。
     idle_enter_confirm: u8,
 }
@@ -87,7 +111,6 @@ impl PetBrain {
             has_hooks: false,
             last_activity: Instant::now(),
             success_until: None,
-            mood_changed_at: None,
             idle_enter_confirm: 0,
         }
     }
@@ -110,7 +133,7 @@ impl PetBrain {
         };
         let session_active = hook_fresh && hook.session_active;
 
-        if activity != "idle" {
+        if activity != "idle" || !hook.in_flight_tools.is_empty() || hook.subagent_depth > 0 {
             self.last_activity = now;
         }
 
@@ -133,23 +156,34 @@ impl PetBrain {
             PetMood::Success
         } else if activity == "agent_error" {
             PetMood::Error
-        } else if activity == "agent_running" {
-            PetMood::AgentRunning
-        } else if activity == "agent_writing" {
-            PetMood::AgentWriting
-        } else if activity == "agent_web_search" {
-            PetMood::AgentWebSearch
-        } else if activity == "agent_searching" {
-            PetMood::AgentSearching
-        } else if activity == "agent_thinking" {
-            PetMood::AgentThinking
-        } else if session_active && hook.age_ms() < THINKING_BUFFER_MS {
-            PetMood::AgentThinking
-        } else if secs_idle > 300 {
-            PetMood::Sleeping
+        } else if hook_fresh && !hook.in_flight_tools.is_empty() {
+            mood_from_in_flight(hook).unwrap_or_else(|| map_activity_to_busy(activity))
+        } else if hook_fresh && hook.subagent_depth > 0 && session_active {
+            // 子 Agent 仍在跑：避免主线程已 idle 时小猪过早发呆
+            match map_activity_to_busy(activity) {
+                PetMood::Idle | PetMood::Sleeping => PetMood::AgentThinking,
+                other => other,
+            }
         } else {
-            PetMood::Idle
+            map_activity_to_busy(activity)
         };
+
+        if matches!(
+            next_mood,
+            PetMood::Idle | PetMood::Sleeping
+        ) && session_active
+            && hook_fresh
+            && hook.age_ms() < THINKING_BUFFER_MS
+            && activity != "agent_error"
+            && self.success_until.is_none()
+        {
+            next_mood = PetMood::AgentThinking;
+        }
+
+        if next_mood == PetMood::Idle && secs_idle > 300 {
+            next_mood = PetMood::Sleeping;
+        }
+
         if Self::is_busy_mood(self.mood) {
             if next_mood == PetMood::Idle {
                 self.idle_enter_confirm = self.idle_enter_confirm.saturating_add(1);
@@ -163,22 +197,21 @@ impl PetBrain {
             self.idle_enter_confirm = 0;
         }
 
-        let allow_transition = if next_mood == self.mood {
-            true
-        } else if !Self::is_busy_mood(next_mood) {
-            true
-        } else {
-            let elapsed_ms = self
-                .mood_changed_at
-                .map(|t| now.duration_since(t).as_millis() as u64)
-                .unwrap_or(u64::MAX);
-            elapsed_ms >= MIN_MOOD_DURATION_MS
-        };
-
-        if allow_transition && next_mood != self.mood {
+        // Phase 1：Busy ↔ Busy 立即切换，不再卡 1.5s；其它迁移一律即时。
+        if next_mood != self.mood {
             self.mood = next_mood;
-            self.mood_changed_at = Some(now);
         }
+    }
+}
+
+fn map_activity_to_busy(activity: &str) -> PetMood {
+    match activity {
+        "agent_running" => PetMood::AgentRunning,
+        "agent_writing" => PetMood::AgentWriting,
+        "agent_web_search" => PetMood::AgentWebSearch,
+        "agent_searching" => PetMood::AgentSearching,
+        "agent_thinking" => PetMood::AgentThinking,
+        _ => PetMood::Idle,
     }
 }
 
@@ -193,5 +226,62 @@ pub fn mood_css_class(mood: PetMood) -> &'static str {
         PetMood::Error => "error",
         PetMood::Success => "success",
         PetMood::Sleeping => "sleeping",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::hook_state::InFlightTool;
+
+    fn ts_now() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64
+    }
+
+    fn fresh_hook(mut h: HookState) -> HookState {
+        h.ts = ts_now();
+        h
+    }
+
+    #[test]
+    fn fusion_prefers_running_over_searching() {
+        let mut brain = PetBrain::new();
+        let native = NativeState::default();
+        let hook = fresh_hook(HookState {
+            activity: "agent_searching".into(),
+            session_active: true,
+            in_flight_tools: vec![
+                InFlightTool {
+                    tool_use_id: "a".into(),
+                    cluster: "agent_searching".into(),
+                    started_at_ms: 0,
+                },
+                InFlightTool {
+                    tool_use_id: "b".into(),
+                    cluster: "agent_running".into(),
+                    started_at_ms: 0,
+                },
+            ],
+            ..Default::default()
+        });
+        brain.tick(&native, &hook);
+        assert_eq!(brain.mood, PetMood::AgentRunning);
+    }
+
+    #[test]
+    fn subagent_depth_keeps_thinking_when_activity_idle() {
+        let mut brain = PetBrain::new();
+        let native = NativeState::default();
+        let hook = fresh_hook(HookState {
+            activity: "idle".into(),
+            session_active: true,
+            subagent_depth: 1,
+            ..Default::default()
+        });
+        brain.tick(&native, &hook);
+        assert_eq!(brain.mood, PetMood::AgentThinking);
     }
 }

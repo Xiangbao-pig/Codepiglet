@@ -2,8 +2,20 @@ use std::path::PathBuf;
 
 use serde::Deserialize;
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct InFlightTool {
+    pub tool_use_id: String,
+    pub cluster: String,
+    pub started_at_ms: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
 pub struct HookState {
+    /// Hook 写入的 schema 版本；宠物侧暂仅反序列化预留。
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub schema_version: u32,
     #[serde(default)]
     pub ts: u64,
     #[serde(default)]
@@ -23,6 +35,31 @@ pub struct HookState {
     /// 用户点击发送（beforeSubmitPrompt）时刻；用于任务耗时 → 庆祝分档。
     #[serde(default)]
     pub task_started_at_ms: Option<u64>,
+    #[serde(default)]
+    pub in_flight_tools: Vec<InFlightTool>,
+    #[serde(default)]
+    pub subagent_depth: u32,
+    /// 当前焦点文件（basename），来自 afterFileEdit / preToolUse(Write…)。
+    #[serde(default)]
+    pub focus_file: Option<String>,
+}
+
+impl Default for HookState {
+    fn default() -> Self {
+        Self {
+            schema_version: 0,
+            ts: 0,
+            activity: String::new(),
+            session_active: false,
+            tool_success_ts: None,
+            file_edit_success_ts: None,
+            last_event_duration_ms: None,
+            task_started_at_ms: None,
+            in_flight_tools: Vec::new(),
+            subagent_depth: 0,
+            focus_file: None,
+        }
+    }
 }
 
 impl HookState {

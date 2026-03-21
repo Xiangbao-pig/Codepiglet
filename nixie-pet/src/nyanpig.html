@@ -288,6 +288,29 @@ body {
     line-height: 1.4;
     padding: 8px 14px 12px;
 }
+.bubble-mood-stack {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+}
+.bubble-line1 {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    width: 100%;
+}
+.focus-file-hint {
+    font-size: 8px;
+    line-height: 1.3;
+    color: #555;
+    max-width: 13em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.focus-file-hint:empty {
+    display: none !important;
+}
 
 .bubble {
     position: relative;
@@ -791,9 +814,12 @@ svg.pet-main-svg {
                 <use class="pix-bubble-drop" href="#nixie-pixel-speech" transform="translate(2,2)" fill="#bdbdbd"/>
                 <use class="pix-bubble-face" href="#nixie-pixel-speech"/>
             </svg>
-            <div class="pix-bubble-inner">
-                <span id="mood-text">idle</span>
-                <div class="dot" id="ext-dot"></div>
+            <div class="pix-bubble-inner bubble-mood-stack">
+                <div class="bubble-line1">
+                    <span id="mood-text">idle</span>
+                    <div class="dot" id="ext-dot"></div>
+                </div>
+                <div id="focus-file-hint" class="focus-file-hint" aria-hidden="true"></div>
             </div>
         </div>
     </div>
@@ -1124,9 +1150,18 @@ function syncNativeHints(hasExt) {
     else dot.classList.remove('active');
 }
 // 气泡与当前状态绑定：切换状态时旧气泡消失、显示新状态台词并重新计时 2.5s，故不一定会显示满 2.5s
-function updateMood(mood, label, hasExt, quote) {
+function setFocusFileHint(name) {
+    var el = document.getElementById('focus-file-hint');
+    if (!el) return;
+    var s = name != null && String(name).length ? String(name) : '';
+    el.textContent = s;
+}
+function updateMood(mood, label, hasExt, quote, focusFile) {
     document.getElementById('pet').className = 'mood-' + mood;
     document.getElementById('mood-text').textContent = quote !== undefined ? quote : label;
+    if (focusFile !== undefined) {
+        setFocusFileHint(focusFile);
+    }
     var dot = document.getElementById('ext-dot');
     if (hasExt) dot.classList.add('active');
     else dot.classList.remove('active');
@@ -1165,8 +1200,8 @@ function showToast(msg) {
     }, 2500);
 }
 /** 同一次脚本里先切 mood 再挂庆祝，避免 WKWebView 在两段 evaluate 之间绘制一帧「仍是 writing 皮 + 庆祝层」 */
-function updateMoodThenApplyCelebration(mood, label, hasExt, quote, tier, durationMs, isError) {
-    updateMood(mood, label, hasExt, quote);
+function updateMoodThenApplyCelebration(mood, label, hasExt, quote, focusFile, tier, durationMs, isError) {
+    updateMood(mood, label, hasExt, quote, focusFile);
     applyCelebrationTier(tier, durationMs, isError);
 }
 /** Overlay：庆祝分档（与 Core mood 独立；未来 AnimalRenderer 可接不同动效） */
