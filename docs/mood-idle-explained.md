@@ -51,4 +51,4 @@ Pet 端逻辑是：只要 **session 仍算「刚活跃」**（上次 hook 写入
 | 且距离上次 hook 已经 ≥ 3 秒（过了「算作思考中」的窗口） |
 | 或者已经超过 10 秒没有任何 hook 写入（state 过期，被当成 idle） |
 
-当前「算作思考中」的缓冲为 **3 秒**（`state.rs` 中 `THINKING_BUFFER_MS`），工具跑完后会短暂保持 Thinking 再切到 Idle，避免常态彩虹。State 新鲜度仍为 10 秒（`hook_state::is_fresh()`）。
+当前「算作思考中」的缓冲为 **3 秒**（`pet_core.rs` 中 `THINKING_BUFFER_MS`），工具跑完后会短暂保持 Thinking 再切到 Idle，避免常态彩虹。State 新鲜度仍为 10 秒（`hook_state::is_fresh()`）。

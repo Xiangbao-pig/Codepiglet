@@ -1,27 +1,31 @@
 # Nixie 架构说明
 
-## 设计原则：纯 Hook + 额外信息
+## 设计原则：Core（mood）与 Overlay（表现）分离
 
-- **小猪对 Cursor 状态的感知以 Hook 为主**：Agent 相关 mood（Thinking / Writing / Running / Searching / WebSearch / Error / Success）及 Idle、Sleeping 仅由 `~/.nixie/state.json` 中的 hook 决定。**UserCoding** 为唯一例外：在「无新鲜 hook 且 Cursor 进程在运行」时由 nixie-pet 根据本机进程检测显示，便于保留「用户在写代码、无 agent」的展示。
-- **额外信息**：小猪可以额外获得与「当前是哪种 mood」无关的上下文，用于展示或后续行为，例如：
-  - **来自 hook**：某次 hook 事件耗时（如 postToolUse 的 duration）、事件名等（可写入 state.json 可选字段）。
-  - **来自本机**：Git 分支（用于气泡分支标签）、内存占用、本地时间等，由 nixie-pet 轮询或计算，仅作展示或扩展逻辑，不参与 mood 判定。
+- **Core（`pet_core`）**：只负责 **PetMood**（Idle / AgentThinking / … / Success / Error / Sleeping）。由 `~/.nixie/state.json` 中的 Hook 驱动；**不包含**庆祝分档、投喂、遛猪、微反馈 Toast 等业务表现逻辑。
+- **Overlay（`pet_overlay`）**：独立调度庆祝分档、Hook 微反馈 Toast、投喂冷却、遛猪状态机（骨架）等；**永远不写入 PetMood**。未来多动物时：**共享同一套 Overlay 事件**，仅换 `AnimalRenderer`（猪 / 猫 / 兔等）。
+- **额外信息**：Git 分支、进程、内存等放在 `NativeState`，供 UI 或 Overlay 使用，**不参与 mood 判定**（与 `PetBrain` 的约定保持不变）。
 
-这样架构清晰：**状态 = hook；展示/扩展 = hook + 本机信息**。
+### Fail-open（多层降级）
+
+1. **Hook 状态读失败** → `HookState::default()`，Core 回到安全默认。
+2. **Overlay 持久化读失败**（如 `~/.nixie/overlay.json`）→ 投喂冷却从空状态开始。
+3. **Overlay 某条逻辑出错** → 该 tick 少发事件，不阻塞 Core。
+4. **前端脚本执行失败** → `evaluate_script` 忽略错误，窗口与 mood 仍可用。
 
 ---
 
 ## 数据流
 
 ```
-Cursor Hooks (preToolUse / postToolUse / stop / ...)
-    → nixie-hook 解析 stdin JSON，映射为 activity / session_active / tool_success_ts 等
-    → 原子写入 ~/.nixie/state.json
+Cursor Hooks
+    → nixie-hook → 原子写入 ~/.nixie/state.json
 
-nixie-pet 轮询 state.json (150ms)
-    → HookState (ts, activity, session_active, tool_success_ts, …)
-    → PetBrain.tick(context, hook) 仅根据 hook 计算 mood
-    → 可选：从本机读取 git、内存、时间 填入 context，用于 UI（如气泡 branch、未来展示耗时/内存）
+nixie-pet 轮询 state.json (~150ms)
+    → HookState
+    → PetBrain.tick（仅 mood）
+    → PetOverlay.tick（庆祝 / Toast / 投喂 / 遛猪；输入 mood + prev_mood + hook）
+    → UserEvent::MoodChanged（Core）与 UserEvent::Overlay（表现层）
 ```
 
 ---
@@ -30,16 +34,23 @@ nixie-pet 轮询 state.json (150ms)
 
 | 模块 | 职责 |
 |------|------|
-| **nixie-hook** | 消费 Cursor hook 的 stdin JSON，映射为统一 activity，原子写 state.json；可选写入 last_event_duration_ms、last_event_name 等。 |
-| **hook_state.rs** | 读取 state.json，反序列化为 HookState；供 PetBrain 使用。 |
-| **state.rs** | PetBrain：根据 HookState 计算 PetMood；UserCoding 由「无新鲜 hook + context.cursor_running」触发；其余 context 仅作额外信息。 |
-| **main.rs** | 轮询 hook_state + 可选轮询 git/进程/内存；调用 brain.tick(context, hook)；将 mood + 上下文（如 branch）发给前端。 |
+| **nixie-hook** | 消费 Cursor hook，映射 activity，原子写 state.json。 |
+| **hook_state.rs** | 读取 state.json → `HookState`。 |
+| **pet_core.rs** | `PetMood`、`PetBrain`：仅根据 Hook 计算 mood；`NativeState` 为上下文。 |
+| **pet_overlay.rs** | `PetOverlay`：`OverlayEvent`（庆祝分档、Toast、投喂可用性、遛猪阶段等）。 |
+| **main.rs** | 轮询；先 `brain.tick`，再 `overlay.tick`；分别派发 Core / Overlay 到 WebView。 |
 
 ---
 
 ## 扩展「额外信息」的约定
 
-- **state.json**：可增加可选字段（如 `last_event_duration_ms`、`last_event_name`），nixie-hook 在能拿到时写入（如 postToolUse 的 duration）。
-- **NativeState**：可增加 `memory_pct`、`local_time` 等，由 nixie-pet 在轮询时填充，仅用于 UI 或后续行为，不参与 `next_mood` 计算。
+- **state.json**：可增加可选字段；nixie-hook 写入；Overlay 可读但不改 mood。
+- **overlay.json**：投喂时间等 Overlay 专用持久化，与 Core 隔离。
 
-这样后续加「某 hook 经历了多久」「电脑内存」「本地时间」等，都只扩展「额外信息」通道，不破坏「mood 纯 hook」的约束。
+这样后续加「任务耗时展示」「内存告警」等，优先走 Overlay 或 `NativeState`，不污染 `PetMood`。
+
+---
+
+## 人格与互动层（非 PetState）
+
+遛猪、投喂、番茄钟、空闲自娱自乐、音效等**刻意不写成新 `PetMood`**，避免状态爆炸；与「业务 mood」分层的完整约定见 **[interaction-layer-architecture.md](interaction-layer-architecture.md)**。下一迭代将优先实现其中的 **番茄钟** 与 **空闲自娱自乐**。

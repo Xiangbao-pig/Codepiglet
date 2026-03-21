@@ -20,6 +20,9 @@ pub struct HookState {
     #[serde(default)]
     #[allow(dead_code)]
     pub last_event_duration_ms: Option<u64>,
+    /// 用户点击发送（beforeSubmitPrompt）时刻；用于任务耗时 → 庆祝分档。
+    #[serde(default)]
+    pub task_started_at_ms: Option<u64>,
 }
 
 impl HookState {

@@ -492,6 +492,43 @@ svg {
     50% { opacity: 1; filter: brightness(1.15); }
 }
 #pet.mood-thinking .indicator-bulb { display: block; }
+
+/* ════════ OVERLAY：任务完成庆祝分档（s / m / l；与 mood 独立） ════════ */
+@keyframes cele-ok-s {
+    0%, 100% { transform: translate(0, 0) scale(1); }
+    35% { transform: translate(0, -3px) scale(1.04); }
+}
+@keyframes cele-ok-m {
+    0%, 100% { transform: translate(0, 0) scale(1); }
+    25% { transform: translate(0, -6px) scale(1.07); }
+    50% { transform: translate(0, -2px) scale(1.05); }
+}
+@keyframes cele-ok-l {
+    0% { transform: scale(1); filter: brightness(1); }
+    40% { transform: scale(1.1); filter: brightness(1.15) drop-shadow(0 0 8px rgba(255, 190, 90, 0.85)); }
+    100% { transform: scale(1); filter: brightness(1); }
+}
+@keyframes cele-err-s {
+    0%, 100% { transform: translateX(0); }
+    25% { transform: translateX(-2px); }
+    75% { transform: translateX(2px); }
+}
+@keyframes cele-err-m {
+    0%, 100% { transform: translateX(0); }
+    20% { transform: translateX(-4px); }
+    60% { transform: translateX(4px); }
+}
+@keyframes cele-err-l {
+    0%, 100% { transform: translateX(0); filter: saturate(1); }
+    15% { transform: translateX(-5px); filter: saturate(0.65); }
+    45% { transform: translateX(5px); filter: saturate(0.75); }
+}
+#pet[data-celebration-err="0"][data-celebration-tier="s"] { animation: cele-ok-s 0.42s ease-out 1; }
+#pet[data-celebration-err="0"][data-celebration-tier="m"] { animation: cele-ok-m 0.55s ease-out 1; }
+#pet[data-celebration-err="0"][data-celebration-tier="l"] { animation: cele-ok-l 0.95s ease-out 1; }
+#pet[data-celebration-err="1"][data-celebration-tier="s"] { animation: cele-err-s 0.45s ease-out 1; }
+#pet[data-celebration-err="1"][data-celebration-tier="m"] { animation: cele-err-m 0.55s ease-out 1; }
+#pet[data-celebration-err="1"][data-celebration-tier="l"] { animation: cele-err-l 0.75s ease-out 1; }
 </style>
 </head>
 <body>
@@ -588,6 +625,7 @@ svg {
 </div>
 <script>
 var bubbleHideTimer = null;
+var celebrationClearTimer = null;
 // 气泡与当前状态绑定：切换状态时旧气泡消失、显示新状态台词并重新计时 2.5s，故不一定会显示满 2.5s
 function updateMood(mood, label, hasExt, branch, quote) {
     document.getElementById('pet').className = 'mood-' + mood;
@@ -618,6 +656,28 @@ function showToast(msg) {
         bubble.classList.remove('bubble-visible');
         bubbleHideTimer = null;
     }, 2500);
+}
+/** Overlay：庆祝分档（与 Core mood 独立；未来 AnimalRenderer 可接不同动效） */
+function applyCelebrationTier(tier, durationMs, isError) {
+    var pet = document.getElementById('pet');
+    pet.setAttribute('data-celebration-tier', tier || '');
+    pet.setAttribute('data-celebration-ms', String(durationMs || 0));
+    pet.setAttribute('data-celebration-err', isError ? '1' : '0');
+    if (celebrationClearTimer) clearTimeout(celebrationClearTimer);
+    celebrationClearTimer = setTimeout(function() {
+        pet.removeAttribute('data-celebration-tier');
+        pet.removeAttribute('data-celebration-ms');
+        pet.removeAttribute('data-celebration-err');
+        celebrationClearTimer = null;
+    }, 2400);
+}
+function setFeedAvailable(can) {
+    var pet = document.getElementById('pet');
+    pet.setAttribute('data-can-feed', can ? '1' : '0');
+}
+function setWalkPhase(phase) {
+    var pet = document.getElementById('pet');
+    pet.setAttribute('data-walk-phase', phase || 'off');
 }
 document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('pet').className = 'mood-sleeping';

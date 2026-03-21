@@ -19,17 +19,10 @@ struct HookInput {
     duration: Option<u64>,
 }
 
-#[derive(Deserialize)]
-struct NixieStateRead {
-    #[serde(default)]
-    activity: String,
-    #[serde(default)]
-    session_active: bool,
-}
-
 // ── State file written for nixie-pet to consume ──
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize, Clone, Default)]
+#[serde(default)]
 struct NixieState {
     ts: u64,
     activity: String,
@@ -40,6 +33,9 @@ struct NixieState {
     file_edit_success_ts: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     last_event_duration_ms: Option<u64>,
+    /// 用户点击发送（beforeSubmitPrompt）时刻，用于任务耗时 → 庆祝分档。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    task_started_at_ms: Option<u64>,
 }
 
 // ── preToolUse / beforeShellExecution response ──
@@ -62,7 +58,7 @@ fn main() {
 
     let t = now_ms();
     let state = if input.hook_event_name == "postToolUse" {
-        let mut next = read_state_merge();
+        let mut next = read_merged_state();
         next.ts = t;
         next.tool_success_ts = Some(t);
         next.last_event_duration_ms = input.duration;
@@ -71,21 +67,25 @@ fn main() {
         // afterFileEdit 在某些场景（用户保存/格式化/扩展改写）会被频繁触发；
         // 对小猪来说它更像「瞬时回执」而不是「正在写代码」。
         // 因此这里仅触发一次 toast，并尽量保持 mood 不变（不覆盖 ts/activity）。
-        let mut next = read_state_merge();
+        let mut next = read_merged_state();
         next.file_edit_success_ts = Some(t);
         next
     } else {
         let (activity, session_active) = map_event(&input);
-        let mut s = NixieState {
-            ts: t,
-            activity: activity.to_string(),
-            session_active,
-            tool_success_ts: None,
-            file_edit_success_ts: None,
-            last_event_duration_ms: None,
-        };
+        let mut s = read_merged_state();
+        s.ts = t;
+        s.activity = activity.to_string();
+        s.session_active = session_active;
+        s.tool_success_ts = None;
+        s.file_edit_success_ts = None;
+        if input.hook_event_name == "beforeSubmitPrompt" {
+            // 用户点击发送 = 本轮任务起点（庆祝耗时从此刻算起）
+            s.task_started_at_ms = Some(t);
+        }
         if let Some(d) = input.duration {
             s.last_event_duration_ms = Some(d);
+        } else {
+            s.last_event_duration_ms = None;
         }
         s
     };
@@ -161,44 +161,12 @@ fn map_event(input: &HookInput) -> (&'static str, bool) {
     }
 }
 
-fn read_state_merge() -> NixieState {
+fn read_merged_state() -> NixieState {
     let path = nixie_dir().join("state.json");
-    let contents = match std::fs::read_to_string(&path) {
-        Ok(c) => c,
-        Err(_) => return NixieState {
-            ts: 0,
-            activity: "idle".to_string(),
-            session_active: false,
-            tool_success_ts: None,
-            file_edit_success_ts: None,
-            last_event_duration_ms: None,
-        },
-    };
-    let read: NixieStateRead = match serde_json::from_str(&contents) {
-        Ok(r) => r,
-        Err(_) => return NixieState {
-            ts: 0,
-            activity: "idle".to_string(),
-            session_active: false,
-            tool_success_ts: None,
-            file_edit_success_ts: None,
-            last_event_duration_ms: None,
-        },
-    };
-    NixieState {
-        ts: read_state_ts(&contents).unwrap_or(0),
-        activity: if read.activity.is_empty() { "idle".to_string() } else { read.activity },
-        session_active: read.session_active,
-        tool_success_ts: None,
-        file_edit_success_ts: None,
-        last_event_duration_ms: None,
-    }
-}
-
-fn read_state_ts(json: &str) -> Option<u64> {
-    #[derive(Deserialize)]
-    struct T { ts: u64 }
-    serde_json::from_str::<T>(json).ok().map(|t| t.ts)
+    std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|c| serde_json::from_str(&c).ok())
+        .unwrap_or_default()
 }
 
 fn needs_permission_response(event: &str) -> bool {

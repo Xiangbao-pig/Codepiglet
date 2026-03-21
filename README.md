@@ -105,7 +105,8 @@ nixie-pet/                # Desktop pet (Rust + wry/tao)
     main.rs               # Entry point, wry webview + tao window
     nyanpig.rs            # Embeds nyanpig.html via include_str!
     nyanpig.html          # SVG pig + CSS mood skins + JS mood updates
-    state.rs              # NativeState + HookState + PetBrain (9 moods)
+    pet_core.rs           # PetMood + PetBrain (Core，仅 mood)
+    pet_overlay.rs        # 庆祝分档、Toast、投喂冷却、遛猪（Overlay）
     hook_state.rs         # Reads ~/.nixie/state.json (hook protocol)
     git_reader.rs         # Git status via CLI
     process_monitor.rs    # Cursor process detection (sysinfo)
@@ -117,6 +118,8 @@ hooks.json                # Cursor hooks config template
 scripts/install-hooks.sh  # One-command install script
 
 docs/
+  architecture.md         # Core / Overlay 分离与 fail-open
+  interaction-layer-architecture.md  # 遛猪/投喂/番茄钟/idle/音效（非 PetState）
   pet-states.md           # 状态机与皮肤设计
   hooks-to-pet-states.md  # Cursor Hooks 与小猪状态对照（完整 Hook 列表）
   branches.md             # 分支管理约定（main / feat/xxx 流程）

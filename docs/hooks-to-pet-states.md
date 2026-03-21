@@ -110,4 +110,4 @@
 
 - [Cursor Hooks 官方文档](https://cursor.com/cn/docs/hooks)
 - 本仓库：`docs/pet-states.md`（状态机与皮肤设计）
-- 实现：`nixie-hook/src/main.rs`（`map_event`）、`nixie-pet/src/state.rs`（`PetBrain::tick`）
+- 实现：`nixie-hook/src/main.rs`（`map_event`）、`nixie-pet/src/pet_core.rs`（`PetBrain::tick`）
