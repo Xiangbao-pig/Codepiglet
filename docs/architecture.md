@@ -33,8 +33,9 @@
 ```
 Cursor Hooks
     → nixie-hook → 原子写入 ~/.nixie/state.json
+                 →（macOS）可选推一行 JSON 至 ~/.nixie/pet.sock（含 seq）
 
-nixie-pet 轮询 state.json (~150ms)
+nixie-pet：监听 pet.sock 按 seq 合并；无推送时每帧末 recv_timeout(~150ms) 并读盘
     → HookState
     → PetBrain.tick（仅 mood）
     → PetOverlay.tick（庆祝 / Toast / 投喂 / 遛猪；输入 mood + prev_mood + hook）

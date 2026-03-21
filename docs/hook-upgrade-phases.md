@@ -53,7 +53,6 @@
 
 ### Phase 1 不做
 
-- 命名管道 / 套接字（留给 Phase 2）。  
 - 小猪嘴里念文件名（留给 Phase 3，除非你要挤进 Phase 1 末尾）。
 
 ---
@@ -62,22 +61,24 @@
 
 **目标**：在 Phase 1 逻辑正确的前提下，把 **Hook → 宠物** 的延迟从「轮询周期级」压到「事件级」。
 
+**落地状态（macOS）**：已实现。`state.json` 与 UDS 共用同一 JSON 体并含单调 **`seq`**；hook 写盘成功后 **`UnixStream::connect` → 一行 JSON + `\n`**；宠物启动时 **`UnixListener` 绑定 `~/.nixie/pet.sock`**（先 `unlink` 旧路径），后台线程 `accept` + `read_line`，按 `seq` 更新缓存并 **`mpsc` 唤醒**主循环；主循环在每帧末尾 **`recv_timeout(150ms)`**，与磁盘快照 **`merge_with_socket_latest`** 取较新者。无宠物进程时 hook 推送失败静默。**Windows 命名管道**仍为后续专项。
+
 ### 2.1 协议与进程
 
 | 工作项 | 说明 |
 |--------|------|
-| **JSON 行协议** | 每行一条完整状态快照（与 `state.json` 同 schema 或子集 + `seq`）；`nixie-hook` 每次写完磁盘后 **再** `write` 到管道（或仅管道，磁盘改可选 debounce）。 |
-| **macOS** | Unix domain socket，路径如 `~/.nixie/pet.sock`（具体名可再定）。 |
-| **Windows** | 命名管道（与 CodePiggy 思路一致），名如 `\\.\pipe\nixie`（最终名可再定）。 |
-| **宠物侧** | 专用读线程阻塞读 / async；读到一行 → 解析 → 送入现有 `PetBrain` + `PetOverlay` 路径；**失败回退** 150ms 轮询读 `state.json`。 |
-| **seq** | 乱序或过期包丢弃，避免闪回旧状态。 |
+| **JSON 行协议** | 每行一条完整状态快照（与 `state.json` 同 schema，含 `seq`）；`nixie-hook` 每次写完磁盘后再推一行。 |
+| **macOS** | Unix domain socket：`~/.nixie/pet.sock`；实现见 `nixie-pet/src/pet_socket_macos.rs`、hook 内 `push_state_unix_socket`。 |
+| **Windows** | 命名管道（与 CodePiggy 思路一致），后续专项。 |
+| **宠物侧** | 专用线程 `accept`；读到一行 → 解析 `HookState` → 按 `seq` 更新缓存并唤醒；与 `state.json` 合并取新。 |
+| **seq** | 仅接受 `seq` 大于缓存中快照的推送，减轻乱序影响。 |
 
 ### 2.2 打包与安装
 
 | 工作项 | 说明 |
 |--------|------|
-| **文档** | 用户需同时跑 `nixie-hook` + `nixie-pet`；README 写清「管道未连上时自动降级轮询」。 |
-| **开发体验** | `cargo run -p nixie-pet` 无管道时行为与今天一致。 |
+| **文档** | 用户需同时跑 `nixie-hook` + `nixie-pet`；宠物未启动时无 socket，hook 仍写 `state.json`，宠物仅靠文件也能跑。 |
+| **开发体验** | `cargo run -p nixie-pet` 在 macOS 上会监听 `pet.sock`；无 hook 推送时仍依赖文件刷新节奏。 |
 
 ### Phase 2 验收
 

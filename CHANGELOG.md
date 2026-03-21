@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Added
+- **Hook Phase 2（macOS）**：`seq` 单调快照；`nixie-hook` 写 `state.json` 后向 **`~/.nixie/pet.sock`** 推一行 JSON；`nixie-pet` 监听 UDS、`seq` 去重、`mpsc` 唤醒主循环，与磁盘 **`merge_with_socket_latest`**；无宠物时推送失败静默。Windows 管道未实现。
 - **Hook Phase 1**（`hook-upgrade`）：`state.json` 增加 `schema_version`、`in_flight_tools`（`tool_use_id` 配对）、`subagent_depth`、`focus_file`（basename）；宠物侧在 hook 新鲜时按在飞工具 **融合主 busy**（run > write > web > search > think），子 Agent depth 防止主线程已 idle 时误闲；气泡内 **焦点文件名** 展示（`afterFileEdit` / 写类 `preToolUse` 路径字段）
 - **Cursor Hooks 架构** — 通过 Cursor 官方 Hooks API 精确感知 AI Agent 生命周期
 - **nixie-hook 二进制** — 极轻量 Rust 二进制（~440KB），每次 hook 事件同步调用

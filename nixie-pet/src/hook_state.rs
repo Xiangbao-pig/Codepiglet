@@ -12,6 +12,9 @@ pub struct InFlightTool {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct HookState {
+    /// 与 `state.json` 一致；Phase 2 UDS 推送用于与磁盘快照比新。
+    #[serde(default)]
+    pub seq: u64,
     /// Hook 写入的 schema 版本；宠物侧暂仅反序列化预留。
     #[serde(default)]
     #[allow(dead_code)]
@@ -47,6 +50,7 @@ pub struct HookState {
 impl Default for HookState {
     fn default() -> Self {
         Self {
+            seq: 0,
             schema_version: 0,
             ts: 0,
             activity: String::new(),
@@ -77,6 +81,25 @@ pub fn read_hook_state() -> HookState {
     match std::fs::read_to_string(&path) {
         Ok(contents) => serde_json::from_str(&contents).unwrap_or_default(),
         Err(_) => HookState::default(),
+    }
+}
+
+/// 取 `seq` 更新的那份（socket 与磁盘谁新用谁）。
+#[cfg(target_os = "macos")]
+pub fn merge_with_socket_latest(
+    file: HookState,
+    socket: &std::sync::Mutex<Option<HookState>>,
+) -> HookState {
+    let g = socket.lock().unwrap();
+    match g.as_ref() {
+        None => file,
+        Some(s) => {
+            if s.seq > file.seq {
+                s.clone()
+            } else {
+                file
+            }
+        }
     }
 }
 

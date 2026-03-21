@@ -1,6 +1,8 @@
 mod nyanpig;
 mod pet_pointer;
 mod hook_state;
+#[cfg(target_os = "macos")]
+mod pet_socket_macos;
 mod native_pulse;
 mod git_reader;
 mod process_monitor;
@@ -193,6 +195,13 @@ fn main() {
 
     let overlay_for_thread = Arc::clone(&overlay_shared);
     thread::spawn(move || {
+        #[cfg(target_os = "macos")]
+        let (wake_tx, wake_rx) = std::sync::mpsc::channel::<()>();
+        #[cfg(target_os = "macos")]
+        let socket_cache: Arc<Mutex<Option<hook_state::HookState>>> = Arc::new(Mutex::new(None));
+        #[cfg(target_os = "macos")]
+        pet_socket_macos::spawn_listener(Arc::clone(&socket_cache), wake_tx);
+
         let mut brain = PetBrain::new();
         let mut sys = sysinfo::System::new();
         let mut native = NativeState {
@@ -213,6 +222,10 @@ fn main() {
             let mut pending_git: Option<(Option<String>, GitUiSnapshot)> = None;
 
             let mut hook = hook_state::read_hook_state();
+            #[cfg(target_os = "macos")]
+            {
+                hook = hook_state::merge_with_socket_latest(hook, &*socket_cache);
+            }
             if boot_hook_ts != 0 && hook.ts == boot_hook_ts {
                 hook.ts = 0;
                 hook.session_active = false;
@@ -325,6 +338,12 @@ fn main() {
             }
 
             tick += 1;
+            #[cfg(target_os = "macos")]
+            {
+                let _ = wake_rx.recv_timeout(Duration::from_millis(150));
+                while wake_rx.try_recv().is_ok() {}
+            }
+            #[cfg(not(target_os = "macos"))]
             thread::sleep(Duration::from_millis(150));
         }
     });

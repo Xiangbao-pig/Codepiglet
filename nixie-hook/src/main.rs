@@ -38,6 +38,8 @@ struct InFlightTool {
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(default)]
 struct NixieState {
+    /// 单调递增快照序号；Phase 2 用于 UDS 与 state.json 去重、乱序丢弃。
+    seq: u64,
     /// 1 = Phase 1 schema；缺省 0 表示旧文件，宠物侧 fail-open。
     schema_version: u32,
     ts: u64,
@@ -62,6 +64,7 @@ struct NixieState {
 impl Default for NixieState {
     fn default() -> Self {
         Self {
+            seq: 0,
             schema_version: 0,
             ts: 0,
             activity: String::new(),
@@ -104,7 +107,7 @@ fn main() {
     }
 
     state.schema_version = 1;
-    write_state(&state);
+    write_state(&mut state);
 
     if needs_permission_response(&input.hook_event_name) {
         let resp = AllowResponse { permission: "allow" };
@@ -339,17 +342,35 @@ fn needs_permission_response(event: &str) -> bool {
     matches!(event, "preToolUse" | "beforeShellExecution" | "beforeMCPExecution")
 }
 
-fn write_state(state: &NixieState) {
+fn write_state(state: &mut NixieState) {
+    state.seq = state.seq.saturating_add(1);
+
     let dir = nixie_dir();
     let _ = std::fs::create_dir_all(&dir);
 
     let tmp = dir.join("state.json.tmp");
     let target = dir.join("state.json");
 
-    if let Ok(json) = serde_json::to_string(state) {
+    if let Ok(json) = serde_json::to_string(&*state) {
         if std::fs::write(&tmp, &json).is_ok() {
             let _ = std::fs::rename(&tmp, &target);
         }
+        #[cfg(target_os = "macos")]
+        push_state_unix_socket(&json);
+    }
+}
+
+/// Phase 2（macOS）：一行 JSON 推给 `nixie-pet` 监听的 `~/.nixie/pet.sock`；失败静默（宠物未启动时正常）。
+#[cfg(target_os = "macos")]
+fn push_state_unix_socket(json: &str) {
+    use std::io::Write;
+    use std::os::unix::net::UnixStream;
+
+    let path = nixie_dir().join("pet.sock");
+    if let Ok(mut stream) = UnixStream::connect(&path) {
+        let _ = stream.write_all(json.as_bytes());
+        let _ = stream.write_all(b"\n");
+        let _ = stream.flush();
     }
 }
 

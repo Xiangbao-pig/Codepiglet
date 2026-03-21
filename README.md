@@ -54,7 +54,7 @@ cp quotes.example.json ~/.nixie/quotes.json
 
 ## How It Works — Cursor Hooks
 
-Nixie uses [Cursor Hooks](https://cursor.com/cn/docs/hooks) to observe the AI agent lifecycle in real time. A compiled Rust binary (`nixie-hook`) runs on every hook event, maps it to a pet mood, and writes the state to `~/.nixie/state.json`. The desktop pet polls this file at 150ms intervals.
+Nixie uses [Cursor Hooks](https://cursor.com/cn/docs/hooks) to observe the AI agent lifecycle in real time. A compiled Rust binary (`nixie-hook`) runs on every hook event, maps it to a pet mood, and writes the state to `~/.nixie/state.json`. **On macOS**, it also pushes the same JSON (with a monotonic `seq`) as one line to **`~/.nixie/pet.sock`** when the pet is running; the pet merges socket + file and wakes its loop on push. **Without the pet** (or on non-macOS), hooks still work via the file; the pet falls back to reading `state.json` every ~150ms.
 
 **No VS Code extension needed.** Hooks are 100% local, synchronous, and have zero latency.
 
@@ -78,8 +78,9 @@ Nixie uses [Cursor Hooks](https://cursor.com/cn/docs/hooks) to observe the AI ag
 │  stop (completed/error)         → session result      │
 │                                                       │
 │  Atomic write → ~/.nixie/state.json                   │
+│  (macOS) + one JSON line → ~/.nixie/pet.sock if pet up │
 └───────────────────────────────────────────────────────┘
-                      ▼ poll (150ms)
+                      ▼ UDS wake + merge, else poll ~150ms
 ┌─ Rust Desktop Pet (wry + tao) ───────────────────────┐
 │                                                       │
 │  PetBrain.tick(context, hook) → PetMood (10 states)  │
