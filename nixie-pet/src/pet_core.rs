@@ -75,6 +75,8 @@ pub struct PetBrain {
     last_activity: Instant,
     success_until: Option<Instant>,
     mood_changed_at: Option<Instant>,
+    /// 从 AI 忙碌态切入 Idle 需连续 2 个 tick（~300ms）确认，避免 hook 抖动导致反复 Idle → 频繁刷待机台词。
+    idle_enter_confirm: u8,
 }
 
 impl PetBrain {
@@ -86,6 +88,7 @@ impl PetBrain {
             last_activity: Instant::now(),
             success_until: None,
             mood_changed_at: None,
+            idle_enter_confirm: 0,
         }
     }
 
@@ -126,7 +129,7 @@ impl PetBrain {
 
         let secs_idle = now.duration_since(self.last_activity).as_secs();
 
-        let next_mood = if self.success_until.is_some() {
+        let mut next_mood = if self.success_until.is_some() {
             PetMood::Success
         } else if activity == "agent_error" {
             PetMood::Error
@@ -147,6 +150,18 @@ impl PetBrain {
         } else {
             PetMood::Idle
         };
+        if Self::is_busy_mood(self.mood) {
+            if next_mood == PetMood::Idle {
+                self.idle_enter_confirm = self.idle_enter_confirm.saturating_add(1);
+                if self.idle_enter_confirm < 2 {
+                    next_mood = self.mood;
+                }
+            } else {
+                self.idle_enter_confirm = 0;
+            }
+        } else {
+            self.idle_enter_confirm = 0;
+        }
 
         let allow_transition = if next_mood == self.mood {
             true

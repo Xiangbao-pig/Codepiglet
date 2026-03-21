@@ -14,10 +14,10 @@ fn default_quotes() -> HashMap<String, Vec<String>> {
     m.insert(
         "idle".to_string(),
         vec![
-            "发会儿呆~".to_string(),
-            "休息一下".to_string(),
             "在呢在呢".to_string(),
             "等指令中".to_string(),
+            "休息一下".to_string(),
+            "发会儿呆~".to_string(),
             "放空一下".to_string(),
             "歇歇".to_string(),
             "待机中".to_string(),
@@ -196,10 +196,12 @@ pub fn get_random_quote(quotes: &HashMap<String, Vec<String>>, mood_class: &str,
         Some(v) if !v.is_empty() => v,
         _ => return label.to_string(),
     };
-    let idx = (std::time::SystemTime::now()
+    // 避免 as_nanos 直接 as usize 截断导致下标分布偏斜、某些句（尤其列表首项）显得过频
+    let n = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos() as usize)
-        % list.len();
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let mixed = n ^ (n >> 40) ^ (n >> 80);
+    let idx = (mixed as usize) % list.len();
     list[idx].clone()
 }

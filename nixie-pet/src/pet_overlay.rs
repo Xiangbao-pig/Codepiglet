@@ -187,8 +187,7 @@ impl PetOverlay {
         }
     }
 
-    /// 用户从菜单触发投喂时调用（后续接 IPC）；fail-open 写盘失败仅丢持久化。
-    #[allow(dead_code)]
+    /// 用户从菜单触发投喂时调用；fail-open 写盘失败仅丢持久化。
     pub fn register_feed(&mut self) -> bool {
         if !Self::can_feed_now(self.last_feed_at) {
             return false;
@@ -197,6 +196,7 @@ impl PetOverlay {
         save_overlay_persist(&OverlayPersist {
             last_feed_at_ms: now_epoch_ms(),
         });
+        self.last_reported_can_feed = false;
         true
     }
 

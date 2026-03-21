@@ -11,6 +11,7 @@
 - **窗口锁定** — `with_resizable(false)` 防止透明窗口被意外调整大小
 
 ### Changed
+- **Ark Pixel 字体** — 由 HTML 内联 Base64 改为仓库内 `assets/fonts/ark-pixel-10px-monospaced-zh_cn.otf.woff2` + `OFL.txt`（解除对 `nixie-pet/assets/` 的整目录 gitignore）；经 wry `with_custom_protocol("nixie")` 加载，并 `include_bytes!` 嵌入发布二进制，他人克隆或安装包均可一致显示
 - **AI 感知层迁移** — 从"VS Code Extension + 编辑分类"迁移到"Cursor Hooks + 事件映射"
 - 状态文件协议简化为 3 字段：`ts`、`activity`、`session_active`
 - PetBrain 融合逻辑：Hook 信号（AI 状态）优先 > 原生信号（用户状态）补充

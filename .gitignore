@@ -42,8 +42,10 @@ Thumbs.db
 # Nixie runtime
 ~/.nixie/
 
-# Font assets (raw files, already base64-embedded in HTML)
-nixie-pet/assets/
+# Pet: ignore downloaded/working files under assets/, but ship fonts/ (woff2 + OFL) in repo
+nixie-pet/assets/*
+!nixie-pet/assets/fonts/
+!nixie-pet/assets/fonts/**
 
 # Firecrawl cache
 .firecrawl/

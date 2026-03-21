@@ -62,7 +62,7 @@ Nixie uses [Cursor Hooks](https://cursor.com/cn/docs/hooks) to observe the AI ag
 
 ## 架构（纯 Hook + 额外信息）
 
-小猪对 Cursor 状态的感知走**纯 Hook 路线**，mood 仅由 hook 写入的 `~/.nixie/state.json` 决定；Git 分支、hook 耗时、内存、时间等作为**额外信息**仅用于展示或扩展，不参与 mood。详见 [docs/architecture.md](docs/architecture.md)。
+小猪对 Cursor 状态的感知走**纯 Hook 路线**，mood 仅由 hook 写入的 `~/.nixie/state.json` 决定；Git 分支、hook 耗时、内存、时间等作为**额外信息**仅用于展示或扩展，不参与 mood。详见 [docs/architecture.md](docs/architecture.md)。**Git 分支在气泡里的显示逻辑、时长与截断**见 [docs/git-branch-bubble.md](docs/git-branch-bubble.md)。
 
 ## Architecture
 
@@ -110,7 +110,7 @@ nixie-pet/                # Desktop pet (Rust + wry/tao)
     hook_state.rs         # Reads ~/.nixie/state.json (hook protocol)
     git_reader.rs         # Git status via CLI
     process_monitor.rs    # Cursor process detection (sysinfo)
-  assets/                 # Ark Pixel Font (woff2, base64-embedded in HTML)
+  assets/fonts/           # Ark Pixel zh_cn woff2 + OFL（入库；`include_bytes!` 打进二进制）
   src/archive/            # Archived Corgi implementation
 
 quotes.example.json       # 台词配置示例（复制到 ~/.nixie/quotes.json）
@@ -123,8 +123,13 @@ docs/
   pet-states.md           # 状态机与皮肤设计
   hooks-to-pet-states.md  # Cursor Hooks 与小猪状态对照（完整 Hook 列表）
   branches.md             # 分支管理约定（main / feat/xxx 流程）
+  git-branch-bubble.md    # Git 分支角标：数据流、刷新、气泡时长与 CSS 可见性
 ```
 
 ## License
 
 MIT
+
+### 第三方字体
+
+桌面小猪界面气泡使用 **Ark Pixel**（10px 等宽 · 简体中文子集，`nixie-pet/assets/fonts/ark-pixel-10px-monospaced-zh_cn.otf.woff2`），以 `include_bytes!` 嵌入 `nixie-pet` 可执行文件，**用户无需在系统里单独安装字体** 即可获得一致像素风排版。字体以 SIL OFL 1.1 授权，完整文本见同目录 [`nixie-pet/assets/fonts/OFL.txt`](nixie-pet/assets/fonts/OFL.txt)。

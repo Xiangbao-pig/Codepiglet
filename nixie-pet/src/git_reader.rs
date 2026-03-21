@@ -3,15 +3,36 @@ use std::path::Path;
 pub struct GitInfo {
     pub branch: Option<String>,
     pub dirty_count: u32,
+    /// `git rev-parse --short HEAD`，用于检测同分支上的新提交。
+    pub head_short: Option<String>,
 }
 
 /// Reads git state directly from the .git directory — no extension needed.
 pub fn read_git_state(workspace: &Path) -> GitInfo {
     let branch = read_branch(workspace);
     let dirty_count = count_dirty(workspace);
+    let head_short = read_head_short(workspace);
     GitInfo {
         branch,
         dirty_count,
+        head_short,
+    }
+}
+
+fn read_head_short(workspace: &Path) -> Option<String> {
+    let output = std::process::Command::new("git")
+        .args(["rev-parse", "--short", "HEAD"])
+        .current_dir(workspace)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if s.is_empty() {
+        None
+    } else {
+        Some(s)
     }
 }
 

@@ -33,6 +33,8 @@ flowchart TB
 - **Overlay**：回答「宠物在陪伴层面的行为」→ **多条并行子系统**，各自有状态机或调度器，**可叠加**在任意 mood 上（受下文「优先级」约束）。  
 - **音效**：逻辑上属于 Overlay；**合成与播放**在 WebView（零资源包），Rust 侧只负责**开关与触发事件**（可选）。
 
+**补充**：Git 分支名属于 **NativeState** 展示（与 Hook 台词并列进 WebView，但显示策略独立），详见 [git-branch-bubble.md](git-branch-bubble.md)。
+
 ---
 
 ## 2. 五类功能：各自归属（均非 PetState）
@@ -84,17 +86,18 @@ flowchart TB
 
 ### 4.2 投喂（Feed）
 
-- **状态**：冷却倒计时、`can_feed`；可选累计 `feed_count`（产品决定）。  
-- **事件**：`FeedAvailabilityChanged`（已有）；投喂触发时发 **`FeedAnimation` 或一次性 `Overlay` 事件**（待实现）。  
-- **非 PetState**：投喂是 **叠加动画**，不进入 `PetMood`。
+- **状态**：冷却 30s、`can_feed`；`~/.nixie/overlay.json`；Rust `PetOverlay` + `FeedAvailabilityChanged`。  
+- **入口**：右键像素菜单「投喂小苹果」→ IPC `feed` → `register_feed`。  
+- **表现**：气泡文案 + 飞苹果 CSS；冷却中菜单项禁用。  
+- **非 PetState**：不进入 `PetMood`。
 
-### 4.3 番茄钟（Pomodoro）——下一迭代开发
+### 4.3 番茄钟（Pomodoro）
 
-- **状态机**：`Idle` / `Focus` / `ShortBreak` / `LongBreak`（或简化版 `Stopped` / `Running` / `Paused`）。  
-- **计时源**：以 **Rust 单调时钟**或 **前端 `performance.now`** 二选一；推荐 **前端倒计时 + 定期与 Rust 对齐**（减少 IPC），或 **纯 Rust 写 overlay.json 剩余秒**（便于恢复）。  
-- **UI**：`#pet` 上 **徽章节点**（DOM/HTML），与 mood SVG **兄弟节点**，不混入 `PetMood` 的 class。  
-- **事件**：`PomodoroTick { remaining_sec: u32 }`、`PomodoroPhaseChanged { phase }`、`PomodoroCompleted`（完成时音效 + 气泡）。  
-- **非 PetState**：专注态是 **用户行为**，与 Agent 无关。
+- **状态机**：WebView 内简化版 `Stopped` / `Running`（`setInterval` 倒计时）。  
+- **入口**：右键菜单「番茄钟 · 开始」↔「番茄钟 · 停止」单键切换；默认 **25 分钟**（`localStorage` 键 `nixie.pomodoroSec` 可改秒数，≥60）。  
+- **UI**：`#pomodoro-badge` 与台词 `.bubble` 同叠放区（`.speech-stack`），台词 `z-index` 更高不挡字；番茄为像素气泡 + 小三角尾，剩余 **>8 分钟** 红色、**≤8 分钟** 绿色。菜单白底紧凑。  
+- **完成**：Web Audio 短 beep + `showToast('专注时间到！')`。  
+- **非 PetState**：与 `PetMood` 正交。
 
 ### 4.4 空闲自娱自乐（Idle Play）——下一迭代开发
 
