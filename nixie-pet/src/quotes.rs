@@ -1,5 +1,8 @@
 //! 可配置的台词：从 `~/.nixie/quotes.json` 读取，按 mood 随机展示。
-//! 文件需为 UTF-8 编码；key 与 mood 的 CSS class 一致（idle / coding / thinking / ...）。
+//! 文件需为 UTF-8 编码；key 与 mood 的 CSS class 一致（idle / thinking / writing / …）。
+//!
+//! Phase 3：当 `subagent_depth > 0` 时优先使用 **`{mood}_subagent`** 键（如 `thinking_subagent`），
+//! 缺失则回退到普通 mood 键，与副标题「子任务进行中」同屏配合。
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -8,9 +11,92 @@ fn quotes_path() -> Option<PathBuf> {
     std::env::var("HOME").ok().map(|h| PathBuf::from(h).join(".nixie").join("quotes.json"))
 }
 
-/// 内置默认台词（呆萌风格），作为文件缺失或解析失败时的回退。每个状态至少 10 句。
+fn random_index(len: usize) -> usize {
+    if len == 0 {
+        return 0;
+    }
+    let n = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let mixed = n ^ (n >> 40) ^ (n >> 80);
+    (mixed as usize) % len
+}
+
+/// 选台词时的 Hook 侧上下文（Phase 3）。
+#[derive(Clone, Copy, Default)]
+pub struct QuoteContext {
+    /// `HookState.subagent_depth`；>0 时尝试 `{mood}_subagent` 列表。
+    pub subagent_depth: u32,
+}
+
+/// 从 `~/.nixie/quotes.json` 读取配置（UTF-8），缺失的 key 用默认台词补全。
+pub fn load_quotes() -> HashMap<String, Vec<String>> {
+    let mut fallback = default_quotes();
+    let path = match quotes_path() {
+        Some(p) => p,
+        None => return fallback,
+    };
+    let contents = match std::fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(_) => return fallback,
+    };
+    let user: HashMap<String, Vec<String>> = match serde_json::from_str(&contents) {
+        Ok(u) => u,
+        Err(_) => return fallback,
+    };
+    for (k, v) in user {
+        if !v.is_empty() {
+            fallback.insert(k, v);
+        }
+    }
+    fallback
+}
+
+/// Phase 3：按 mood + 子 Agent 上下文选一句；无 `_subagent` 配置时与普通 mood 相同。
+pub fn pick_quote(
+    quotes: &HashMap<String, Vec<String>>,
+    mood_class: &str,
+    label: &str,
+    ctx: &QuoteContext,
+) -> String {
+    if ctx.subagent_depth > 0 {
+        let key = format!("{mood_class}_subagent");
+        if let Some(list) = quotes.get(&key).filter(|v| !v.is_empty()) {
+            let idx = random_index(list.len());
+            return list[idx].clone();
+        }
+    }
+    get_random_quote(quotes, mood_class, label)
+}
+
+/// 从配置中按 mood 随机取一句；无配置或空列表时返回 label 作为回退。
+pub fn get_random_quote(quotes: &HashMap<String, Vec<String>>, mood_class: &str, label: &str) -> String {
+    let list = match quotes.get(mood_class) {
+        Some(v) if !v.is_empty() => v,
+        _ => return label.to_string(),
+    };
+    let idx = random_index(list.len());
+    list[idx].clone()
+}
+
+fn subagent_lines() -> Vec<String> {
+    vec![
+        "分身干活中".to_string(),
+        "子任务跑着呢".to_string(),
+        "那边也在忙".to_string(),
+        "小号加班中".to_string(),
+        "分身别摸鱼".to_string(),
+        "并行冲冲冲".to_string(),
+        "子猪努力中".to_string(),
+        "后台在跑".to_string(),
+    ]
+}
+
+/// 内置默认台词（呆萌风格），作为文件缺失或解析失败时的回退。
 fn default_quotes() -> HashMap<String, Vec<String>> {
     let mut m = HashMap::new();
+    let sa = subagent_lines();
     m.insert(
         "idle".to_string(),
         vec![
@@ -164,44 +250,51 @@ fn default_quotes() -> HashMap<String, Vec<String>> {
             "睡香香".to_string(),
         ],
     );
+
+    // ── Phase 3：子 Agent 专用（键名 = mood_class + "_subagent"）────────────────
+    m.insert("thinking_subagent".to_string(), sa.clone());
+    m.insert("writing_subagent".to_string(), sa.clone());
+    m.insert("running_subagent".to_string(), sa.clone());
+    m.insert("searching_subagent".to_string(), sa.clone());
+    m.insert("web-search_subagent".to_string(), sa);
+    m.insert(
+        "error_subagent".to_string(),
+        vec![
+            "分身也绊了".to_string(),
+            "那边翻车了".to_string(),
+            "子任务报错".to_string(),
+            "小号翻车".to_string(),
+            "并行里有个坑".to_string(),
+        ],
+    );
+    m.insert(
+        "success_subagent".to_string(),
+        vec![
+            "分身收工".to_string(),
+            "那边搞定了".to_string(),
+            "子任务过线".to_string(),
+            "小号立功".to_string(),
+        ],
+    );
+
     m
 }
 
-/// 从 `~/.nixie/quotes.json` 读取配置（UTF-8），缺失的 key 用默认台词补全。
-pub fn load_quotes() -> HashMap<String, Vec<String>> {
-    let mut fallback = default_quotes();
-    let path = match quotes_path() {
-        Some(p) => p,
-        None => return fallback,
-    };
-    let contents = match std::fs::read_to_string(&path) {
-        Ok(c) => c,
-        Err(_) => return fallback,
-    };
-    let user: HashMap<String, Vec<String>> = match serde_json::from_str(&contents) {
-        Ok(u) => u,
-        Err(_) => return fallback,
-    };
-    for (k, v) in user {
-        if !v.is_empty() {
-            fallback.insert(k, v);
-        }
-    }
-    fallback
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-/// 从配置中按 mood 随机取一句；无配置或空列表时返回 label 作为回退。
-pub fn get_random_quote(quotes: &HashMap<String, Vec<String>>, mood_class: &str, label: &str) -> String {
-    let list = match quotes.get(mood_class) {
-        Some(v) if !v.is_empty() => v,
-        _ => return label.to_string(),
-    };
-    // 避免 as_nanos 直接 as usize 截断导致下标分布偏斜、某些句（尤其列表首项）显得过频
-    let n = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let mixed = n ^ (n >> 40) ^ (n >> 80);
-    let idx = (mixed as usize) % list.len();
-    list[idx].clone()
+    #[test]
+    fn pick_quote_prefers_subagent_key() {
+        let mut m = HashMap::new();
+        m.insert("thinking".to_string(), vec!["plain".to_string()]);
+        m.insert(
+            "thinking_subagent".to_string(),
+            vec!["from_sub".to_string()],
+        );
+        let ctx = QuoteContext { subagent_depth: 1 };
+        assert_eq!(pick_quote(&m, "thinking", "fb", &ctx), "from_sub");
+        let ctx0 = QuoteContext { subagent_depth: 0 };
+        assert_eq!(pick_quote(&m, "thinking", "fb", &ctx0), "plain");
+    }
 }
