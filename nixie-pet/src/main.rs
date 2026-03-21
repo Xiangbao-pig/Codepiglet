@@ -116,6 +116,8 @@ enum UserEvent {
     Overlay(OverlayEvent),
     /// 右键菜单投喂：IPC 结果
     FeedResult { ok: bool },
+    /// `overlay.json` 中小猪音效开关变化后同步 WebView
+    SoundSettingChanged { enabled: bool },
     DragWindow,
     /// 外圈穿透 + 全局光标轮询（macOS / Windows）
     TickPoll,
@@ -148,9 +150,14 @@ fn main() {
     });
     let drag_proxy = event_loop.create_proxy();
     let feed_proxy = event_loop.create_proxy();
+    let sound_proxy = event_loop.create_proxy();
 
     let overlay_shared: Arc<Mutex<PetOverlay>> = Arc::new(Mutex::new(PetOverlay::new()));
     let overlay_for_ipc = Arc::clone(&overlay_shared);
+    let boot_sound_enabled = overlay_shared
+        .lock()
+        .map(|o| o.sound_enabled())
+        .unwrap_or(false);
 
     let webview = WebViewBuilder::new()
         .with_transparent(true)
@@ -180,11 +187,23 @@ fn main() {
                         .unwrap_or(false);
                     let _ = feed_proxy.send_event(UserEvent::FeedResult { ok });
                 }
+                "sound_toggle" => {
+                    let enabled = overlay_for_ipc
+                        .lock()
+                        .map(|mut o| o.toggle_sound())
+                        .unwrap_or(false);
+                    let _ = sound_proxy.send_event(UserEvent::SoundSettingChanged { enabled });
+                }
                 _ => {}
             }
         })
         .build(&window)
         .expect("failed to build webview");
+
+    let _ = webview.evaluate_script(&format!(
+        "window.__nixieSoundEnabled={0}; if(typeof setSoundEnabledFromRust==='function')setSoundEnabledFromRust({0}, false);",
+        boot_sound_enabled
+    ));
 
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     {
@@ -364,6 +383,12 @@ fn main() {
                 let _ = webview.evaluate_script(&format!(
                     "onFeedResult({})",
                     if ok { "true" } else { "false" }
+                ));
+            }
+            Event::UserEvent(UserEvent::SoundSettingChanged { enabled }) => {
+                let _ = webview.evaluate_script(&format!(
+                    "setSoundEnabledFromRust({}, true)",
+                    enabled
                 ));
             }
             Event::UserEvent(UserEvent::MoodChanged {

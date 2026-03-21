@@ -68,6 +68,9 @@ const FEED_COOLDOWN: Duration = Duration::from_secs(30);
 struct OverlayPersist {
     #[serde(default)]
     last_feed_at_ms: u64,
+    /// 小猪 Web Audio 8bit 音效；默认关闭，写入 `~/.nixie/overlay.json`。
+    #[serde(default)]
+    sound_enabled: bool,
 }
 
 fn overlay_persist_path() -> std::path::PathBuf {
@@ -151,6 +154,8 @@ pub struct PetOverlay {
 
     walk_phase: WalkPhase,
     last_reported_walk: WalkPhase,
+
+    sound_enabled: bool,
 }
 
 impl PetOverlay {
@@ -177,7 +182,21 @@ impl PetOverlay {
             last_reported_can_feed: can_feed,
             walk_phase: WalkPhase::Off,
             last_reported_walk: WalkPhase::Off,
+            sound_enabled: loaded.sound_enabled,
         }
+    }
+
+    pub fn sound_enabled(&self) -> bool {
+        self.sound_enabled
+    }
+
+    /// 切换音效开关并写入 `overlay.json`（与投喂等字段合并保存）。
+    pub fn toggle_sound(&mut self) -> bool {
+        self.sound_enabled = !self.sound_enabled;
+        let mut p = load_overlay_persist();
+        p.sound_enabled = self.sound_enabled;
+        save_overlay_persist(&p);
+        self.sound_enabled
     }
 
     fn can_feed_now(last_feed_at: Option<Instant>) -> bool {
@@ -193,9 +212,10 @@ impl PetOverlay {
             return false;
         }
         self.last_feed_at = Some(Instant::now());
-        save_overlay_persist(&OverlayPersist {
-            last_feed_at_ms: now_epoch_ms(),
-        });
+        let mut p = load_overlay_persist();
+        p.last_feed_at_ms = now_epoch_ms();
+        p.sound_enabled = self.sound_enabled;
+        save_overlay_persist(&p);
         self.last_reported_can_feed = false;
         true
     }
