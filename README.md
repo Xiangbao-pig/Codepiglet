@@ -1,136 +1,85 @@
-# Codepiglet (Nixie) — Cursor AI Agent Desktop Pet
+# Codepiglet（Nixie）— 你的桌面「彩虹小猪」
 
-A flying **Nyan Pig** that watches your Cursor AI agent work and reacts in real time — with mood-based skins, rainbow trails, and pixel-art speech bubbles.
+> 一只会飞的像素小猪，**不领工资、不交周报**，但会盯着 Cursor 里的 AI 干活，并在你写代码时假装自己也在加班。
 
-When the agent thinks, the pig turns blue with a cool-toned rainbow. When it writes code, classic rainbow trails appear. When errors hit, the pig turns angry red and shakes. When everything succeeds, it celebrates in golden glory.
+它会在 AI **发呆**时变蓝、**敲代码**时拖彩虹、**翻车**时气得发红、**跑通**时金光闪闪。  
+你也可以投喂、遛它、关掉 8-bit 音效（邻居会感谢你）。**它不评判你的品味，只评判你的 Agent 有没有在摸鱼。**
 
-## Quick Start
+---
+
+## 三分钟上手（真的只要三步）
 
 ```bash
-# 1. Install Cursor hooks (builds nixie-hook + configures ~/.cursor/hooks.json)
+# 1. 装好 Cursor Hooks（会编 nixie-hook，并写好 ~/.cursor/hooks.json）
 ./scripts/install-hooks.sh
 
-# 2. Restart Cursor to activate hooks
+# 2. 重启 Cursor（让钩子生效——对，就是得重启，没有魔法）
 
-# 3. Start the pet
+# 3. 把小猪叫出来
 cargo run -p nixie-pet
 
-# Or specify a workspace:
+# 可选：指定工作区，让小猪对你的项目更「专一」
 cargo run -p nixie-pet -- /path/to/your/project
 ```
 
-## Pet States & Skins
+装完如果小猪没反应：先看 Cursor 是否真的在跑、Hooks 是否装好；**技术细节在下面「给好奇宝宝」一节**，别慌。
 
-Each mood maps to a unique color palette + rainbow configuration:
+---
 
-| State | Trigger | Skin | Rainbow |
-|-------|---------|------|---------|
-| **Idle** | No hook activity 30s | Classic pink | Off |
-| **UserCoding** | No fresh hook + Cursor running | Classic pink | Classic 6-color |
-| **AgentThinking** | `afterAgentThought` hook | Blue/lavender | Cool blue gradient |
-| **AgentWriting** | `preToolUse(Write)` hook only | Classic pink | Classic rainbow (fast) |
-| **AgentRunning** | `preToolUse(Shell)` hook | Orange/fire | Fire tones |
-| **AgentSearching** | `preToolUse(Read/Grep)` / `beforeReadFile` | Classic pink, round glasses | Off |
-| **AgentWebSearch** | `preToolUse(MCP:web/fetch/firecrawl)` | Classic pink, sunglasses | Wave/ocean gradient |
-| **Error** | `postToolUseFailure` / `stop(error)` hook | Dark red | Warning fire |
-| **Success** | `stop(completed)` hook | Golden | Blue-white-red |
-| **Sleeping** | No activity 5 min | Desaturated gray | Off |
+## 小猪今天心情怎么样？（人话版）
 
-## 小猪台词配置（可选）
+| 你大概会看到 | 人话 |
+|-------------|------|
+| 粉粉的、彩虹晃悠 | 你在写代码，或者 AI 在写，总之有人在动键盘 |
+| 蓝蓝的、冷色条 | AI 在「思考人生」（thought） |
+| 橙/火系 | 终端/命令在跑，小心别 `rm -rf` |
+| 绿绿的、像在翻书 | 在读文件、搜代码 |
+| 戴墨镜冲浪色 | 在上网搜东西（MCP 那套） |
+| 红红的、抖一抖 | 出错了——小猪比你还急 |
+| 金闪闪 | 成了！可以假装自己很厉害 |
+| 灰灰的、想睡觉 | 太久没人理它，小猪进入省电模式 |
 
-状态变化时，小猪会在气泡里随机显示一句**当前状态**下的台词；气泡约 2.5 秒后自动消失。气泡与状态绑定：**若中途切换状态，旧气泡会消失并显示新状态的台词**（并重新计时），因此不一定会显示满 2.5 秒。台词可自定义。
+想查**完整状态名、触发条件、皮肤表**：请看 [`docs/pet-states.md`](docs/pet-states.md)（那里才是正经文档）。
 
-- **配置文件路径**：`~/.nixie/quotes.json`（须为 **UTF-8** 编码）
-- **格式**：JSON 对象，key 为状态名（与上表一致：`idle` / `coding` / `thinking` / `writing` / `running` / `searching` / `web-search` / `error` / `success` / `sleeping`），value 为字符串数组，每次随机取一条
-- **示例**：复制 `quotes.example.json` 到 `~/.nixie/quotes.json` 后按需修改
+---
 
-```bash
-mkdir -p ~/.nixie
-cp quotes.example.json ~/.nixie/quotes.json
-# 用任意编辑器修改 ~/.nixie/quotes.json，保存为 UTF-8
-```
+## 台词自定义（可选）
 
-若文件不存在或解析失败，将使用内置默认台词。
+小猪气泡里会随机冒台词；你也可以改成自己的毒鸡汤或冷笑话。
 
-## How It Works — Cursor Hooks
+- 配置文件：`~/.nixie/quotes.json`（**UTF-8**）
+- 抄示例：`cp quotes.example.json ~/.nixie/quotes.json` 再改
 
-Nixie uses [Cursor Hooks](https://cursor.com/cn/docs/hooks) to observe the AI agent lifecycle in real time. A compiled Rust binary (`nixie-hook`) runs on every hook event, maps it to a pet mood, and writes the state to `~/.nixie/state.json`. **On macOS**, it also pushes the same JSON (with a monotonic `seq`) as one line to **`~/.nixie/pet.sock`** when the pet is running; the pet merges socket + file and wakes its loop on push. **Without the pet** (or on non-macOS), hooks still work via the file; the pet falls back to reading `state.json` every ~150ms.
+---
 
-**No VS Code extension needed.** Hooks are 100% local, synchronous, and have zero latency.
+## 给好奇宝宝：它到底怎么知道 AI 在干嘛？
 
-> See [`docs/pet-states.md`](docs/pet-states.md) for the complete state machine design.
+一句话：**Cursor Hooks** 把事件丢给本地的小程序 `nixie-hook`，它把状态写进 `~/.nixie/state.json`；桌面小猪读这个文件（在 macOS 上还会用套接字**拍一下**小猪让它别睡太死）。  
+**不需要装 VS Code 扩展**，东西都在你电脑上转，延迟≈没有。
 
-## 架构（纯 Hook + 额外信息）
+- Hook 与状态对照：[`docs/hooks-to-pet-states.md`](docs/hooks-to-pet-states.md)  
+- 架构、Core/Overlay 分工：[`docs/architecture.md`](docs/architecture.md)  
+- 分支气泡、Git 角标：[`docs/git-branch-bubble.md`](docs/git-branch-bubble.md)  
+- 分支怎么管、怎么提交不翻车：[`docs/branches.md`](docs/branches.md)、[`docs/code-management.md`](docs/code-management.md)
 
-小猪对 Cursor 状态的感知走**纯 Hook 路线**，mood 仅由 hook 写入的 `~/.nixie/state.json` 决定；Git 分支、hook 耗时、内存、时间等作为**额外信息**仅用于展示或扩展，不参与 mood。详见 [docs/architecture.md](docs/architecture.md)。**Git 分支在气泡里的显示逻辑、时长与截断**见 [docs/git-branch-bubble.md](docs/git-branch-bubble.md)。
+---
 
-## Architecture
+## 项目长什么样？（极简地图）
 
 ```
-┌─ Cursor Hooks (nixie-hook binary) ───────────────────┐
-│                                                       │
-│  sessionStart / sessionEnd      → session lifecycle   │
-│  afterAgentThought              → thinking detected   │
-│  preToolUse (Read/Grep/Write/Shell) → tool activity   │
-│  afterFileEdit                  → writing confirmed   │
-│  afterShellExecution            → command finished    │
-│  postToolUseFailure             → error detected      │
-│  stop (completed/error)         → session result      │
-│                                                       │
-│  Atomic write → ~/.nixie/state.json                   │
-│  (macOS) + one JSON line → ~/.nixie/pet.sock if pet up │
-└───────────────────────────────────────────────────────┘
-                      ▼ UDS wake + merge, else poll ~150ms
-┌─ Rust Desktop Pet (wry + tao) ───────────────────────┐
-│                                                       │
-│  PetBrain.tick(context, hook) → PetMood (10 states)  │
-│  SVG Nyan Pig rendered in transparent webview         │
-│  CSS custom properties drive mood skins & animations  │
-│  Ark Pixel Font speech bubble for status display      │
-│  Transparent, frameless, always-on-top, draggable     │
-│                                                       │
-│  Native monitoring (fallback when hooks inactive):    │
-│  - Git branch/dirty (git status CLI)                  │
-│  - Cursor process detection (sysinfo)                 │
-└───────────────────────────────────────────────────────┘
+nixie-hook/     # 钩子入口：JSON 进，状态出
+nixie-pet/      # 透明窗口 + 像素猪（HTML/CSS/JS 拼进 Rust）
+hooks.json      # 钩子配置模板
+scripts/        # 一键安装等脚本
+docs/           # 正经说明都在这儿
 ```
 
-## Project Structure
-
-```
-nixie-hook/               # Cursor hook handler (Rust binary)
-  src/main.rs             # stdin JSON → event mapping → state.json
-
-nixie-pet/                # Desktop pet (Rust + wry/tao)
-  src/
-    main.rs               # Entry point, wry webview + tao window
-    nyanpig.rs            # Embeds nyanpig.html via include_str!
-    nyanpig.html          # SVG pig + CSS mood skins + JS mood updates
-    pet_core.rs           # PetMood + PetBrain (Core，仅 mood)
-    pet_overlay.rs        # 庆祝分档、Toast、投喂冷却、遛猪（Overlay）
-    hook_state.rs         # Reads ~/.nixie/state.json (hook protocol)
-    git_reader.rs         # Git status via CLI
-    process_monitor.rs    # Cursor process detection (sysinfo)
-  assets/fonts/           # Ark Pixel zh_cn woff2 + OFL（入库；`include_bytes!` 打进二进制）
-  src/archive/            # Archived Corgi implementation
-
-quotes.example.json       # 台词配置示例（复制到 ~/.nixie/quotes.json）
-hooks.json                # Cursor hooks config template
-scripts/install-hooks.sh  # One-command install script
-
-docs/
-  architecture.md         # Core / Overlay 分离与 fail-open
-  interaction-layer-architecture.md  # 遛猪/投喂/番茄钟/idle/音效（非 PetState）
-  pet-states.md           # 状态机与皮肤设计
-  hooks-to-pet-states.md  # Cursor Hooks 与小猪状态对照（完整 Hook 列表）
-  branches.md             # 分支管理约定（main / feat/xxx 流程）
-  git-branch-bubble.md    # Git 分支角标：数据流、刷新、气泡时长与 CSS 可见性
-```
+---
 
 ## License
 
 MIT
 
-### 第三方字体
+### 字体
 
-桌面小猪界面气泡使用 **Ark Pixel**（10px 等宽 · 简体中文子集，`nixie-pet/assets/fonts/ark-pixel-10px-monospaced-zh_cn.otf.woff2`），以 `include_bytes!` 嵌入 `nixie-pet` 可执行文件，**用户无需在系统里单独安装字体** 即可获得一致像素风排版。字体以 SIL OFL 1.1 授权，完整文本见同目录 [`nixie-pet/assets/fonts/OFL.txt`](nixie-pet/assets/fonts/OFL.txt)。
+气泡用 **Ark Pixel**（简体中文子集，已嵌进二进制，不用单独装字体）。授权见 [`nixie-pet/assets/fonts/OFL.txt`](nixie-pet/assets/fonts/OFL.txt)。

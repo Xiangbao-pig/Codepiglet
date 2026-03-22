@@ -1,5 +1,7 @@
 # Nixie 架构说明
 
+本文描述 **当前代码**（`nixie-hook` + `nixie-pet`）中的职责划分与数据流，便于同事快速上手。
+
 ## 隐私与本地优先（产品宗旨）
 
 - **默认完全本地运行**：除用户主动进行的「联网测试」等最小握手外，**不向公网拉取资源**（禁止在 UI 中嵌入 Google Fonts、分析脚本、远程配置等）。
@@ -8,23 +10,36 @@
 
 ### 相对 Cursor 的数据边界（当前阶段）
 
-- **不扩大信息面**：Nixie **不会**为「多知道一点」而去扫描、枚举或主动打开 **Cursor 在当前工作流中并未通过 Agent / Hooks 触及**的路径；不把小猪做成独立于 Cursor 的全盘文件猎手。
-- **与 Cursor 同视界**：Cursor 经 [Hooks](https://cursor.com/cn/docs/hooks) 传给脚本的字段（含路径、命令、对话相关载荷、以及部分事件中的文件/终端正文等），均属 Nixie **可以**消费与展示的范围；**以官方 Hook 输入为事实来源**，而不是臆测磁盘上还有什么。
-- **产品演进**：例如让小猪**说出正在修改的文件名**，应优先来自 Hook 载荷中的 `file_path` / 工具输入等 **Cursor 已给出的信息**，而非自行 `walk` 仓库猜改动。
-- **当前优先级**：隐私原则要守住，但在**现阶段**，架构与迭代更应优先保证小猪对 Cursor **准确、跟手、可解释**的感知；在「不扩大 Cursor 信息面」的前提下，愿意为更好的状态融合与台词/上下文**积极使用 Hook 里已有字段**。
+- **不扩大信息面**：Nixie **不会**为「多知道一点」而去扫描、枚举或主动打开 **Cursor 在当前工作流中并未通过 Agent / Hooks 触及**的路径。
+- **与 Cursor 同视界**：Cursor 经 [Hooks](https://cursor.com/cn/docs/hooks) 传给脚本的字段，均属 Nixie **可以**消费与展示的范围；**以官方 Hook 输入为事实来源**。
+- 例如展示「正在改的文件名」时，以 Hook 载荷中的路径字段为准（见 `nixie-hook` 对 `focus_file` 的写入），而不是自行遍历仓库猜测。
 
 ## 设计原则：Core（mood）与 Overlay（表现）分离
 
-- **Core（`pet_core`）**：只负责 **PetMood**（Idle / AgentThinking / … / Success / Error / Sleeping）。由 `~/.nixie/state.json` 中的 Hook 驱动；**不包含**庆祝分档、投喂、遛猪、微反馈 Toast 等业务表现逻辑。
-- **Overlay（`pet_overlay`）**：独立调度庆祝分档、Hook 微反馈 Toast、投喂冷却、遛猪状态机（骨架）等；**永远不写入 PetMood**。未来多动物时：**共享同一套 Overlay 事件**，仅换 `AnimalRenderer`（猪 / 猫 / 兔等）。
-- **额外信息**：Git 分支、进程、内存等放在 `NativeState`，供 UI 或 Overlay 使用，**不参与 mood 判定**（与 `PetBrain` 的约定保持不变）。
+- **Core（`pet_core`）**：只负责 **`PetMood`** 枚举的九种心情（见下表），由 **`HookState`**（来自 `~/.nixie/state.json`，可选经 macOS UDS 合并）驱动；**不实现**庆祝分档、投喂、Hook 微反馈 Toast、遛猪等业务表现逻辑。
+- **Overlay（`pet_overlay`）**：根据同一帧的 `HookState`、`PetMood` 与 mood 迁移，发出 `OverlayEvent`（Toast、庆祝分档、投喂可用性等）；**永远不写入 `PetMood`**。
+- **`NativeState`（`pet_core`）**：Git 分支、Cursor 进程等，在 `main` 中周期性更新，供 **气泡 Git 提示**等使用；**`PetBrain::tick` 当前不使用 `NativeState` 参与 mood 计算**（参数保留为 `_context`）。Overlay 的 `tick` 入参含 `NativeState`，目前仅占位预留（见 `pet_overlay.rs` 末尾）。
+
+### `PetMood`（与 `mood_css_class` 一一对应）
+
+| `PetMood` | WebView CSS 类名 |
+|-----------|------------------|
+| Idle | `idle` |
+| AgentThinking | `thinking` |
+| AgentWriting | `writing` |
+| AgentRunning | `running` |
+| AgentSearching | `searching` |
+| AgentWebSearch | `web-search` |
+| Error | `error` |
+| Success | `success` |
+| Sleeping | `sleeping` |
 
 ### Fail-open（多层降级）
 
-1. **Hook 状态读失败** → `HookState::default()`，Core 回到安全默认。
-2. **Overlay 持久化读失败**（如 `~/.nixie/overlay.json`）→ 投喂冷却从空状态开始。
-3. **Overlay 某条逻辑出错** → 该 tick 少发事件，不阻塞 Core。
-4. **前端脚本执行失败** → `evaluate_script` 忽略错误，窗口与 mood 仍可用。
+1. **`state.json` 读失败或解析失败** → `HookState::default()`，Core 侧按空状态处理。
+2. **Overlay 持久化读失败**（`~/.nixie/overlay.json`）→ 投喂冷却等从默认开始。
+3. **Overlay 某条逻辑异常** → 该 tick 少发事件，不阻塞 Core。
+4. **前端 `evaluate_script` 失败** → 忽略错误，窗口与 mood 仍可用。
 
 ---
 
@@ -32,39 +47,72 @@
 
 ```
 Cursor Hooks
-    → nixie-hook → 原子写入 ~/.nixie/state.json
-                 →（macOS）可选推一行 JSON 至 ~/.nixie/pet.sock（含 seq）
+    → nixie-hook → 原子写入 ~/.nixie/state.json（每次写入递增 seq）
+                 →（仅 macOS）再向 ~/.nixie/pet.sock 写一行 JSON（与磁盘内容同形，换行结尾）
 
-nixie-pet：监听 pet.sock 按 seq 合并；无推送时每帧末 recv_timeout(~150ms) 并读盘
-    → HookState
-    → PetBrain.tick（仅 mood）
-    → PetOverlay.tick（庆祝 / Toast / 投喂 / 遛猪；输入 mood + prev_mood + hook）
-    → UserEvent::MoodChanged（Core）与 UserEvent::Overlay（表现层）
+nixie-pet 后台线程每帧：
+    → 读 state.json
+    →（仅 macOS）与 UDS 缓存按 seq 合并为较新的一份（merge_with_socket_latest）
+    → PetBrain.tick（仅 HookState；新鲜度见下）
+    → PetOverlay.tick（Toast / 庆祝 / 投喂 / 遛猪占位等）
+    → UserEvent → WebView（MoodChanged / MoodWithCelebration / FocusFileHint / Overlay / GitTip …）
+
+帧间隔：macOS 上为 recv_timeout(150ms) 与唤醒合并；非 macOS 为 thread::sleep(150ms)，仅依赖读盘。
 ```
 
+- **新鲜度**：`HookState::is_fresh()` — `ts > 0` 且距今不足 **10 秒**。不新鲜时，`PetBrain` 将 `activity` **视为** `idle` 参与映射（磁盘上的 `in_flight_tools` 在「不新鲜」时**不会**参与在飞融合，见 `pet_core.rs`）。
+- **macOS UDS**：宠物未启动时 hook 连接 `pet.sock` 失败会静默失败，仅依赖文件；非 macOS 无推送通道。
+
 ---
 
-## 模块职责
+## `~/.nixie/state.json` 协议（当前实现）
 
-| 模块 | 职责 |
+由 **`nixie-hook`** 写入；**`nixie-pet/src/hook_state.rs`** 反序列化。下列字段与代码一致（可选字段缺省为 `null` 或空数组）：
+
+| 字段 | 说明 |
 |------|------|
-| **nixie-hook** | 消费 Cursor hook，映射 activity，原子写 state.json。 |
-| **hook_state.rs** | 读取 state.json → `HookState`。 |
-| **pet_core.rs** | `PetMood`、`PetBrain`：仅根据 Hook 计算 mood；`NativeState` 为上下文。 |
-| **pet_overlay.rs** | `PetOverlay`：`OverlayEvent`（庆祝分档、Toast、投喂可用性、遛猪阶段等）。 |
-| **main.rs** | 轮询；先 `brain.tick`，再 `overlay.tick`；分别派发 Core / Overlay 到 WebView。 |
+| `seq` | 单调递增；用于 UDS 与磁盘快照比新。 |
+| `schema_version` | Hook 写入为 `1`；旧文件可为 `0`。 |
+| `ts` | 最近一次由「默认事件路径」更新的毫秒时间戳。 |
+| `activity` | 主活动字符串（如 `agent_thinking`、`agent_running`、`idle`、`agent_success` 等）。 |
+| `session_active` | 会话是否仍视为活跃（由 hook 映射决定）。 |
+| `tool_success_ts` | `postToolUse` 时设置；用于一次性「执行成功！」Toast。 |
+| `file_edit_success_ts` | `afterFileEdit` 专用路径设置；用于「文件完成编辑！」Toast；**该事件不覆盖 `activity`**（见 hook 分支）。 |
+| `last_event_duration_ms` | 可选；部分事件带 `duration` 时写入。 |
+| `task_started_at_ms` | `beforeSubmitPrompt` 时写入；Overlay 用于任务耗时 → 庆祝分档。 |
+| `in_flight_tools` | `preToolUse` 入列、`postToolUse` / `postToolUseFailure` 等出列；每项含 `tool_use_id`、`cluster`、`started_at_ms`。 |
+| `subagent_depth` | `subagentStart` / `subagentStop` 增减；`sessionEnd` / `stop` 清零。 |
+| `focus_file` | 焦点文件 basename；用于气泡主行展示。 |
+
+**在飞融合（仅 hook 新鲜且 `in_flight_tools` 非空）**：按簇优先级取 mood — **run > write > web > search > think**（`pet_core.rs` 中 `fusion_priority_mood`）。
+
+**其它落盘文件**：`~/.nixie/overlay.json`（投喂冷却、音效开关等，Overlay 专用）；可选 **`~/.nixie/native.json`**（`native_pulse.rs`）供「用户打字」类 Toast，**不由 hook 写入**。
 
 ---
 
-## 扩展「额外信息」的约定
+## 模块职责（仓库内）
 
-- **state.json**：可增加可选字段；nixie-hook 写入；Overlay 可读但不改 mood。
-- **overlay.json**：投喂时间等 Overlay 专用持久化，与 Core 隔离。
+| 位置 | 职责 |
+|------|------|
+| **`nixie-hook`** | 读 stdin JSON，维护 `NixieState`，原子写 `state.json`，macOS 上推 `pet.sock`。 |
+| **`hook_state.rs`** | 读 `state.json` → `HookState`；macOS 上 `merge_with_socket_latest`。 |
+| **`pet_core.rs`** | `PetMood`、`PetBrain::tick`；仅根据 `HookState` 更新 mood。 |
+| **`pet_overlay.rs`** | `PetOverlay::tick` → `OverlayEvent`。 |
+| **`quotes.rs`** | `~/.nixie/quotes.json`；`subagent_depth > 0` 时可选用 `{mood}_subagent` 键。 |
+| **`main.rs`** | 后台线程驱动 brain + overlay；拼装 `UserEvent`（含 `focus_file`、子 Agent 副标题、`GitTip` 等）并派发 WebView。 |
+| **`pet_socket_macos.rs`**（仅 macOS） | 监听 `pet.sock`，读行 JSON 更新缓存并唤醒主循环。 |
+| **`nyanpig.rs` + `nyanpig-*.html` / `nyanpig.css`、`nyanpig.js`** | 编译期 `concat!` 拼成一页 HTML 嵌入 WebView；**运行时**仍为单文档字符串，无外链脚本。 |
 
-这样后续加「任务耗时展示」「内存告警」等，优先走 Overlay 或 `NativeState`，不污染 `PetMood`。
+**Nyan Pig 静态资源拆分（给其它模块对齐用）**：`nixie-pet/src/` 内为 `nyanpig-head.html`、`nyanpig.css`、`nyanpig-body.html`、`nyanpig.js`、`nyanpig-tail.html`，由 `nyanpig.rs` 唯一入口拼接，语义与原先单体 `nyanpig.html` 一致。**引用 DOM / 布局**时以 **`nyanpig-body.html`**（如 `#pet`）为准；**引用样式**以 **`nyanpig.css`** 为准；**引用前端逻辑**以 **`nyanpig.js`** 为准。`pet_pointer.rs` 等需与内圈尺寸一致时，说明里已指向 `nyanpig-body.html`。
 
 ---
 
-## 人格与互动层（非 PetState）
+## 与 PetMood 正交的 UI 能力
 
-遛猪、投喂、番茄钟、空闲自娱自乐、音效等**刻意不写成新 `PetMood`**，避免状态爆炸；与「业务 mood」分层的完整约定见 **[interaction-layer-architecture.md](interaction-layer-architecture.md)**。下一迭代将优先实现其中的 **番茄钟** 与 **空闲自娱自乐**。
+庆祝分档、投喂、Hook Toast、遛猪占位、音效开关等 **不新增 `PetMood`**。部分交互（例如番茄钟 UI）在 **Nyan Pig 前端片段**（上表）中实现，与 Rust Core 并行，不改变 `PetBrain` 输入。
+
+---
+
+## 延伸阅读（非「当前实现」清单）
+
+更完整的 Hook 事件与状态对照见 [hooks-to-pet-states.md](hooks-to-pet-states.md)；长期分层设想见 [interaction-layer-architecture.md](interaction-layer-architecture.md)（含规划内容，**以代码为准**）。

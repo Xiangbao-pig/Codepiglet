@@ -65,6 +65,9 @@ impl PetMood {
 /// session 活跃时工具间隙仍显示 Thinking 的缓冲（毫秒）。
 const THINKING_BUFFER_MS: u64 = 3_000;
 
+/// `agent_success` 后保持 Success 的毫秒数。须 ≥ Web 侧 `CELEBRATION_ATTR_HOLD_MS`（`nyanpig.js`），否则 success 窗口末尾易与 Hook 抖动叠成「金Success→粉Idle→再Success」闪屏与多一声成功音效。
+const SUCCESS_HOLD_MS: u64 = 4_500;
+
 /// 在飞工具簇 → 展示优先级（越大越优先）。与 hook-upgrade 文档一致：run > write > web > search > think。
 fn fusion_priority_mood(cluster: &str) -> Option<(u8, PetMood)> {
     Some(match cluster {
@@ -101,6 +104,8 @@ pub struct PetBrain {
     success_until: Option<Instant>,
     /// 从 AI 忙碌态切入 Idle 需连续 2 个 tick（~300ms）确认，避免 hook 抖动导致反复 Idle → 频繁刷待机台词。
     idle_enter_confirm: u8,
+    /// Success 窗口末尾：连续 2 tick 才允许 Success→Idle，缓和 `agent_success` / session 字段一帧抖动。
+    success_to_idle_confirm: u8,
 }
 
 impl PetBrain {
@@ -112,7 +117,13 @@ impl PetBrain {
             last_activity: Instant::now(),
             success_until: None,
             idle_enter_confirm: 0,
+            success_to_idle_confirm: 0,
         }
+    }
+
+    /// 用户点击逗小猪：刷新「活跃」时间，使从 Sleeping 回到 Idle（仍由 `tick` 根据 Hook 决定 Error 等）。
+    pub fn note_user_poke(&mut self) {
+        self.last_activity = Instant::now();
     }
 
     fn is_busy_mood(m: PetMood) -> bool {
@@ -138,7 +149,7 @@ impl PetBrain {
         }
 
         if activity == "agent_success" && self.success_until.is_none() {
-            self.success_until = Some(now + Duration::from_secs(3));
+            self.success_until = Some(now + Duration::from_millis(SUCCESS_HOLD_MS));
             self.last_activity = now;
         }
         if activity == "agent_error" {
@@ -195,6 +206,17 @@ impl PetBrain {
             }
         } else {
             self.idle_enter_confirm = 0;
+        }
+
+        if self.mood == PetMood::Success && next_mood == PetMood::Idle {
+            self.success_to_idle_confirm = self.success_to_idle_confirm.saturating_add(1);
+            if self.success_to_idle_confirm < 2 {
+                next_mood = PetMood::Success;
+            } else {
+                self.success_to_idle_confirm = 0;
+            }
+        } else {
+            self.success_to_idle_confirm = 0;
         }
 
         // Phase 1：Busy ↔ Busy 立即切换，不再卡 1.5s；其它迁移一律即时。

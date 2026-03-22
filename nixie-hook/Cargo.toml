@@ -1,6 +1,6 @@
 [package]
 name = "nixie-hook"
-version = "0.3.0"
+version = "1.0.0"
 edition = "2021"
 description = "Cursor Hooks handler for Nixie desktop pet — maps agent events to pet mood"
 

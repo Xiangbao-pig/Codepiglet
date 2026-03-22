@@ -1,5 +1,5 @@
 //! 外圈鼠标穿透（`set_ignore_cursor_events`）+ 用全局光标驱动小猪朝向（WebView 外圈收不到 mousemove）。
-//! 与 `nyanpig.html` 中内圈尺寸、居中方式保持一致。
+//! 与嵌入的宠物 HTML（`nyanpig-body.html` 中 `.pet-look-field` / `#pet` 布局）内圈尺寸与位置保持一致。
 
 use tao::dpi::LogicalSize;
 use tao::window::Window;
@@ -8,6 +8,8 @@ use wry::WebView;
 /// 内圈：拖拽、右键菜单（逻辑像素，与旧版窗口客户区一致）
 pub const INNER_W: f64 = 152.0;
 pub const INNER_H: f64 = 108.0;
+/// 内圈顶边距（逻辑 px）。折中：比垂直居中（约 96）更靠上便于贴顶拖拽，又比贴顶（28）留足 `speech-stack` 台词区；须与 `nyanpig.css` `.pet-look-field` 的 `padding-top` 一致。
+pub const INNER_TOP_LOGICAL: f64 = 64.0;
 /// 外圈：朝向判定 + 点击穿透到下层窗口
 pub const OUTER_W: f64 = 400.0;
 pub const OUTER_H: f64 = 300.0;
@@ -28,9 +30,16 @@ pub struct PetPointerPassThrough {
     last_ignore: Option<bool>,
     last_sent: Option<(f64, f64)>,
     was_inside_outer: bool,
+    /// 右键菜单展开时项可能落在外圈透明区；为 true 时整窗客户区内不启用穿透，否则点菜单会落到下层窗口。
+    pixel_menu_open: bool,
 }
 
 impl PetPointerPassThrough {
+    pub fn set_pixel_menu_open(&mut self, open: bool) {
+        self.pixel_menu_open = open;
+        self.last_ignore = None;
+    }
+
     pub fn poll_frame(&mut self, window: &Window, webview: &WebView) {
         #[cfg(not(any(target_os = "macos", target_os = "windows")))]
         {
@@ -77,11 +86,12 @@ impl PetPointerPassThrough {
             let ly = ly_phys / sf;
 
             let ix0 = (outer_w_log - INNER_W) / 2.0;
-            let iy0 = (outer_h_log - INNER_H) / 2.0;
+            let iy0_max = (outer_h_log - INNER_H).max(0.0);
+            let iy0 = INNER_TOP_LOGICAL.min(iy0_max);
             let inside_inner =
                 lx >= ix0 && lx < ix0 + INNER_W && ly >= iy0 && ly < iy0 + INNER_H;
 
-            let want_ignore = !inside_inner;
+            let want_ignore = !self.pixel_menu_open && !inside_inner;
             if self.last_ignore != Some(want_ignore) {
                 let _ = window.set_ignore_cursor_events(want_ignore);
                 self.last_ignore = Some(want_ignore);

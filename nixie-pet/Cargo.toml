@@ -1,6 +1,6 @@
 [package]
 name = "nixie-pet"
-version = "0.3.0"
+version = "1.0.0"
 edition = "2021"
 description = "A desktop Nyan Pig pet that reacts to Cursor AI agent state via Hooks"
 

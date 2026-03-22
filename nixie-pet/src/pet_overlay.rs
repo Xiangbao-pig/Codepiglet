@@ -173,10 +173,17 @@ impl PetOverlay {
             None
         };
         let can_feed = Self::can_feed_now(last_feed_at);
+        // 避免进程启动时把磁盘上**旧的** `native.json` 当成新脉冲再 Toast 一次（去重状态此前仅在内存里）
+        let pulse_boot = crate::native_pulse::read_native_pulse();
+        let last_user_typing_ts = if pulse_boot.ts > 0 && pulse_boot.kind == "user_typing" {
+            Some(pulse_boot.ts)
+        } else {
+            None
+        };
         Self {
             last_tool_success_ts: None,
             last_file_edit_ts: None,
-            last_user_typing_ts: None,
+            last_user_typing_ts,
             last_celebrated_terminal_hook_ts: None,
             last_feed_at,
             last_reported_can_feed: can_feed,

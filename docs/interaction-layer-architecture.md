@@ -35,6 +35,8 @@ flowchart TB
 
 **补充**：Git 分支名属于 **NativeState** 展示（与 Hook 台词并列进 WebView，但显示策略独立），详见 [git-branch-bubble.md](git-branch-bubble.md)。
 
+**Nyan Pig 工程布局**：与 `PetMood` 正交的番茄钟、投喂、音效等 **WebView 内**实现，落在 `nixie-pet/src/` 的 **`nyanpig-head.html`、`nyanpig.css`、`nyanpig-body.html`、`nyanpig.js`、`nyanpig-tail.html`**，由 **`nyanpig.rs`** 编译期拼接为完整 HTML（无外链脚本）。协议与 Rust 侧事件不变；与其它模块对齐时见 [architecture.md](architecture.md) 中「Nyan Pig 静态资源拆分」。
+
 ---
 
 ## 2. 五类功能：各自归属（均非 PetState）

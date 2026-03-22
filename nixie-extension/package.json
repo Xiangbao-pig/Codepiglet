@@ -2,7 +2,7 @@
   "name": "nixie",
   "displayName": "Nixie - Desktop Pet Bridge",
   "description": "Monitors Cursor IDE state and writes to a shared file for the Nixie desktop pet",
-  "version": "0.2.0",
+  "version": "1.0.0",
   "publisher": "nixie",
   "engines": {
     "vscode": "^1.85.0"

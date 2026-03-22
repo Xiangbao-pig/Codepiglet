@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.0.0]
+
+### Changed
+- **版本对齐**：`nixie-pet`、`nixie-hook` 与 VS Code/Cursor 扩展 `nixie-extension` 均升至 **1.0.0**。
+
 ## [Unreleased]
 
 ### Added

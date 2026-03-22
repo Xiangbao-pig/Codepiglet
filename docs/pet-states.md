@@ -1,252 +1,137 @@
-# Nixie 宠物状态设计文档
+# Nixie 宠物状态设计文档（与实现对齐）
+
+本文描述 **`nixie-pet` 当前实现**中的心情状态、皮肤与 Hook 映射，便于同事快速上手。细节以 `pet_core.rs`、`nixie-hook/src/main.rs` 为准。
 
 ## 设计理念
 
-Nixie 的核心目标是让桌面宠物**精确感知 Cursor AI Agent 的工作流程**，而不仅仅是泛化的"文件变了"。
+Nixie 让桌面宠物跟随 **Cursor Agent** 的生命周期变化外观：思考、读代码、写文件、跑命令、成功或失败等阶段各有可辨识的 **mood**（`PetMood`）。
 
-一次典型的 Cursor Agent 工作流如下：
-
-```
-用户输入指令 → Agent 思考 → Agent 搜索/阅读文件 → Agent 编写代码 → Agent 执行命令 → 完成/出错
-```
-
-宠物应该在这个流程的每个阶段做出**不同的、有辨识度的反应**。
-
-> **当前实现**：Nyan Pig（飞行小猪），通过 CSS 自定义属性实现心情驱动的皮肤系统。
-> 每种心情对应一套颜色方案（身体、斑点、耳朵、鼻子、眼睛）和彩虹配色。
->
-> **感知层**：通过 [Cursor Hooks](https://cursor.com/cn/docs/hooks) 同步接收 AI Agent 生命周期事件。  
-> **Hook 与状态对照**：所有官方 Hook 事件与小猪状态的映射见 [hooks-to-pet-states.md](hooks-to-pet-states.md)。
+- **渲染**：Nyan Pig（`nyanpig.rs` 编译期拼接 `nyanpig-head/body/tail.html`、`nyanpig.css`、`nyanpig.js`，运行时仍为整页 HTML），`#pet.mood-*` CSS 类驱动配色与动画。
+- **感知**：以 **`nixie-hook`** 写入的 `~/.nixie/state.json` 为主；macOS 上可经 **`pet.sock`** 推送同一快照（见 [architecture.md](architecture.md)）。
 
 ---
 
-## 皮肤系统（Mood → Color Mapping）
+## `PetMood` 与皮肤（九种）
 
-所有颜色通过 CSS Custom Properties 在 `#pet.mood-*` 类上设置，过渡动画 0.5s。
+Rust 中 **`PetMood` 共九种**，与 `pet_core::mood_css_class` → WebView 的 `mood-*` 类名一致。**不存在**单独的「用户写代码」心情枚举项（前端 HTML 里若留有未使用的 `mood-coding` 样式，当前 **不会** 由 Rust 切入）。
 
-| 心情 | 身体主色 | 身体亮色 | 彩虹色系 | 彩虹可见 | 飞行速度 |
-|------|---------|---------|---------|---------|---------|
-| **Idle** | `#f19183` 粉 | `#fcd8d7` 浅粉 | — | 隐藏 | 慢 (0.4s) |
-| **UserCoding** | `#f19183` 粉 | `#fcd8d7` 浅粉 | 经典六色 | 显示 | 中 (0.4s) |
-| **Thinking** | `#7b8bc4` 蓝紫 | `#c5cef0` 浅蓝 | 冷蓝渐变 | 显示 | 很慢 (0.8s) |
-| **Writing** | `#f19183` 粉 | `#fcd8d7` 浅粉 | 经典六色 | 显示 | 快 (0.25s) |
-| **Running** | `#e87830` 橙 | `#f5a862` 浅橙 | 火焰色 | 显示 | 很快 (0.15s) |
-| **Searching**（本地） | 原色粉 | 原色粉 | — | 隐藏 | 中 (0.4s)，**圆框眼镜** |
-| **WebSearch**（在线） | 原色粉 | 原色粉 | 海浪色（深蓝→浅青） | 显示 | 中 (0.4s)，**墨镜** |
-| **Error** | `#410a07` 暗红 | `#bb1626` 红 | 警告火焰 | 显示 | 抖动 |
-| **Success** | `#f89f39` 金 | `#fdb85a` 浅金 | 蓝白红 | 显示 | 中快 (0.3s) |
-| **Sleeping** | `#c0a8a4` 灰 | `#e0d4d2` 浅灰 | — | 隐藏 | 静止 |
+所有颜色通过 CSS Custom Properties 在 `#pet.mood-*` 上设置，过渡约 0.5s。
 
-### 特殊动画效果
+| 心情（Rust） | CSS 类 | 身体主色 | 身体亮色 | 彩虹 | 其它视觉 |
+|--------------|--------|----------|----------|------|----------|
+| Idle | `idle` | `#f19183` | `#fcd8d7` | 关 | 慢飞 |
+| AgentThinking | `thinking` | `#7b8bc4` | `#c5cef0` | 冷蓝渐变 | 慢飘 |
+| AgentWriting | `writing` | `#f19183` | `#fcd8d7` | 经典六色 | 快飞，❤️ |
+| AgentRunning | `running` | `#e87830` | `#f5a862` | 火焰 | 很快 |
+| AgentSearching | `searching` | 原粉 | 原粉 | 关 | **圆框眼镜** |
+| AgentWebSearch | `web-search` | 原粉 | 原粉 | 海浪渐变 | **墨镜** |
+| Error | `error` | `#410a07` | `#bb1626` | 警告色 | **shake** |
+| Success | `success` | `#f89f39` | `#fdb85a` | 蓝白红 | ❤️ |
+| Sleeping | `sleeping` | `#c0a8a4` | `#e0d4d2` | 关 | 动画暂停，💤 |
 
-- **Error**：SVG 执行 `shake` 抖动动画（替代常规飞行）
-- **Sleeping**：所有动画暂停（`animation-play-state: paused`），💤 浮动
-- **Writing / Success**：显示 ❤️ 浮动指示器
-- **Error**：显示 ⚠️ 浮动指示器
+气泡主行文案由 `PetMood::label()` 驱动（如 `thinking...`、`writing!`）；**焦点文件名**、**子 Agent 副标题**等由 `main.rs` 根据 `HookState` 追加，不改变 `PetMood` 枚举。
 
 ---
 
-## 状态总览
+## 状态总览（与 `PetBrain` 一致）
 
-```
-                    ┌─────────┐
-              ┌────▶│ Sleeping │◀── 5 分钟无 hook 活动
-              │     └─────────┘
-              │
-              │     ┌──────────┐
-              ├────▶│   Idle   │◀── 30 秒无 hook 活动
-              │     └────┬─────┘
-              │          │ 无新鲜 hook 且 Cursor 运行
-              │          ▼
-              │     ┌──────────────┐
-              │     │  UserCoding  │◀── 本机：cursor_running，无 hook
-              │     └──────┬───────┘
-              │            │ Hook: beforeSubmitPrompt / afterAgentThought
-              │          ▼
-              │     ┌────────────────┐
-              │     │ AgentThinking  │◀── afterAgentThought / session 间隙 / preToolUse(Task)
-              │     └───┬────┬───┬──┘
-              │         │    │   │
-              │         ▼    │   ▼
-              │  ┌──────────┐│ ┌───────────────┐
-              │  │ AgentSearch│ │ AgentWriting  │◀── preToolUse(Write/StrReplace/Delete/EditNotebook)
-              │  │  -ing     ││ └───────┬───────┘
-              │  └──────────┘│         │
-              │  ┌──────────┐│         │
-              │  │AgentWeb  ││         ▼
-              │  │ Search   ││  ┌────────────────┐
-              │  └──────────┘   │ AgentRunning   │◀── preToolUse(Shell) / MCP(非 web)
-              │  preToolUse      └───────┬────────┘
-              │  (Read/Grep) / MCP(web*)  │
-              │              ┌───────┴───────┐
-              │              ▼               ▼
-              │          ┌─────────┐   ┌─────────┐
-              └──────────┤ Success │   │  Error  │
-                         └─────────┘   └─────────┘
-                  Hook: stop(completed)  Hook: postToolUseFailure / stop(error)
-```
+- **基础映射**：新鲜 Hook 上，由 `activity`（及在飞融合、`subagent_depth`、Thinking 缓冲等）得到 **Idle** 或某一 **Agent 忙碌态** / **Error**。
+- **Success**：`activity == "agent_success"` 时进入 **Success**，内部 **`success_until` 约 3 秒** 后回到 Idle/Sleeping 逻辑。
+- **Sleeping**：若当前将落在 **Idle**，且距 **`last_activity` 已超过 300 秒**，则改为 **Sleeping**（5 分钟无「活跃」）。
+- **活跃**（用于 Sleeping 计时）：新鲜 Hook 上 `activity != "idle"`，或 **`in_flight_tools` 非空**，或 **`subagent_depth > 0`** 时刷新 `last_activity`（见 `pet_core.rs`）。
 
 ---
 
-## 检测机制：纯 Hook 路线
+## `PetBrain` 计算要点（无 `NativeState` 参与）
 
-小猪对 Cursor 状态的感知以 **Hook 为主**：Agent 相关 mood 及 Idle/Sleeping 仅由 `~/.nixie/state.json` 决定。**UserCoding** 在「无新鲜 hook 且 Cursor 运行」时由本机进程检测触发。额外信息（Git 分支、hook 耗时、内存、时间等）仅作展示或扩展，见 [architecture.md](architecture.md)。
+`PetBrain::tick(_context, hook)` **只读 `HookState`**。`NativeState` 不参与 mood。
 
-Nixie 使用 Cursor 官方 Hooks API。`nixie-hook` 在每个 hook 事件触发时被调用，将事件映射为 activity，原子写入 `~/.nixie/state.json`。
-
-### Hook 事件 → 活动映射
-
-| Hook 事件 | `tool_name` | → `activity` | → 宠物心情 |
-|-----------|-------------|-------------|-----------|
-| `sessionStart` | — | `idle` | session_active=true |
-| `sessionEnd` | — | `idle` | session_active=false |
-| `afterAgentThought` | — | `agent_thinking` | AgentThinking |
-| `preToolUse` | Read / Grep / Glob / SemanticSearch | `agent_searching` | AgentSearching |
-| `preToolUse` | Shell | `agent_running` | AgentRunning |
-| `preToolUse` | Write / StrReplace / Delete | `agent_writing` | AgentWriting |
-| `preToolUse` | Task | `agent_thinking` | AgentThinking |
-| `afterFileEdit` | — | （不改 activity；仅 toast） | 保持当前 mood（toast：`文件完成编辑！`） |
-| `afterShellExecution` | — | `idle` | (命令完成，等待下一步) |
-| `postToolUseFailure` | — | `agent_error` | Error |
-| `stop` | status=completed | `agent_success` | Success (3s) |
-| `stop` | status=error | `agent_error` | Error |
-
-### 信号融合策略（PetBrain）
-
-PetBrain 融合两层信号：
-
-1. **Hook 层（AI 感知）**：优先。hook 状态新鲜（< 10s）时直接映射 AI 心情
-2. **原生层（用户/环境感知）**：补充。文件系统事件 + Cursor 进程 + Git 状态
-
-```
-优先级：
-1. Success       （agent_success，持续 3 秒）
-2. Error         （agent_error）
-3. AgentRunning  （agent_running）
-4. AgentWriting  （agent_writing）
-5. AgentSearching（agent_searching）
-6. AgentThinking （agent_thinking / session 活跃间隙）
-7. UserCoding    （无新鲜 hook 且 Cursor 运行）
-8. Sleeping      （无 hook 活动 > 300s）
-9. Idle          （默认）
-```
+1. **新鲜度**：`hook.is_fresh()` — `ts > 0` 且距今不足 **10 秒**。不新鲜时，把 `activity` 当作 **`idle`** 处理（且不使用 `in_flight_tools` 融合）。
+2. **Success**：当 `activity == "agent_success"` 时，启动约 **3 秒** 的 `success_until`，期间 mood 固定为 **Success**。
+3. **在飞融合**：新鲜且 `in_flight_tools` 非空时，按簇取最高优先级 mood：**run > write > web > search > think**。
+4. **子 Agent**：新鲜且 `subagent_depth > 0` 且会话活跃时，若单字段 `activity` 会映射成 Idle/Sleeping，则 **强制为 AgentThinking**（避免主线程已 idle 时小猪过早发呆）。
+5. **会话间隙 Thinking**：若已算得 Idle / Sleeping，但 `session_active` 仍为真、Hook 新鲜、距 `ts` 不足 **3 秒**（`THINKING_BUFFER_MS`），且非 `agent_error`、非 Success 窗口，则改为 **AgentThinking**。
+6. **从 AI 忙碌态回到 Idle**：需连续 **2 次** tick（约 300ms）确认，避免抖动。
 
 ---
 
-## 状态详细定义
+## 与 `nixie-hook` 的对应关系
 
-### 1. `Idle` — 闲置
+### 特殊事件（不经过 `map_event` 写 activity）
 
-| 属性 | 值 |
-|------|-----|
-| **触发条件** | 30 秒内无 hook 活动 |
-| **检测方式** | Hook 状态过期或 activity=idle，且 last_activity 超过 30s；且非 UserCoding 条件 |
-| **宠物表现** | 缓慢飞行，经典粉色，无彩虹 |
-| **标签文字** | `idle` |
+| 事件 | 行为 |
+|------|------|
+| **`postToolUse`** | 更新 `ts`、`tool_success_ts`、`last_event_duration_ms`；按 `tool_use_id` 从 `in_flight_tools` 出列；**不改 `activity`**。 |
+| **`afterFileEdit`** | 设置 `file_edit_success_ts`、`focus_file`（basename）；**不改 `activity`**；**不更新 `ts`**（若之后长时间无其它 Hook，`is_fresh()` 可能为假）。 |
 
-### 2. `UserCoding` — 用户编码中（无 Agent）
+### 默认事件 → `activity` / `session_active`（`map_event`）
 
-| 属性 | 值 |
-|------|-----|
-| **触发条件** | 无新鲜 hook（>10s 无 hook 写入）且 Cursor 进程在运行 |
-| **检测方式** | 本机：cursor_running = true，hook 非 fresh |
-| **宠物表现** | 经典粉色，彩虹尾迹 |
-| **标签文字** | `coding` |
+下列为 `nixie-hook` 中 `map_event` 的**当前**返回值（与 `nixie-hook/src/main.rs` 一致）：
 
-### 3. `AgentThinking` — AI 思考中
+| Hook 事件 | `activity` | `session_active` |
+|-----------|------------|------------------|
+| `sessionStart` | `idle` | `true` |
+| `sessionEnd` | `idle` | `false`（`apply_default_event` 内还会清空在飞、`subagent_depth`、`focus_file`） |
+| `afterAgentThought` | `agent_thinking` | `true` |
+| `beforeSubmitPrompt` | `agent_thinking` | `true`（且 `task_started_at_ms` 写入） |
+| `afterAgentResponse` | `agent_thinking` | `true` |
+| `preCompact` | `agent_thinking` | `true` |
+| `beforeReadFile` | `agent_searching` | `true` |
+| `preToolUse` | 按工具名（见下表） | `true` |
+| `afterFileEdit` | — | （见上：专用分支，不覆盖 activity） |
+| `afterShellExecution` | `idle` | `true` |
+| `afterMCPExecution` | `idle` | `true` |
+| `postToolUse` | — | （见上：专用分支） |
+| `postToolUseFailure` | `agent_error` | `true` |
+| `subagentStart` | `agent_thinking` | `true`（且 `subagent_depth` 自增） |
+| `subagentStop` | `idle` | `true`（且 `subagent_depth` 自减） |
+| `stop` | `completed` → `agent_success`；`error` → `agent_error`；其它 → `idle` | 均为 `false`（`stop` 时亦清空在飞与 `subagent_depth`） |
 
-| 属性 | 值 |
-|------|-----|
-| **触发条件** | `afterAgentThought` hook 触发，或 session 活跃但两次工具调用之间的间隙 |
-| **检测方式** | Hook: activity = `agent_thinking`，或 session_active=true 且 activity=idle 且 age < 3s |
-| **宠物表现** | 变蓝紫色，冷色调彩虹，缓慢飘动 |
-| **标签文字** | `thinking...` |
+`preToolUse` 的 `tool_name` 映射：
 
-### 4. `AgentWriting` — AI 正在写代码
+| `tool_name` | `activity` |
+|-------------|------------|
+| Read / Grep / Glob / SemanticSearch | `agent_searching` |
+| Shell | `agent_running` |
+| Write / StrReplace / Delete / EditNotebook | `agent_writing` |
+| Task | `agent_thinking` |
+| `MCP:*` 且名含 web / fetch / firecrawl | `agent_web_search` |
+| 其它 `MCP:*` | `agent_running` |
+| 其它 | `agent_thinking` |
 
-| 属性 | 值 |
-|------|-----|
-| **触发条件** | Agent 使用 Write/StrReplace/Delete/EditNotebook 工具时（preToolUse） |
-| **检测方式** | Hook: `preToolUse`(Write/StrReplace/Delete/EditNotebook)；afterFileEdit 不映射为 Writing |
-| **宠物表现** | 经典粉色 + 经典彩虹，快速飞行，❤️ 浮动 |
-| **标签文字** | `writing!` |
-
-### 5. `AgentRunning` — AI 正在执行命令
-
-| 属性 | 值 |
-|------|-----|
-| **触发条件** | Agent 使用 Shell 工具 |
-| **检测方式** | Hook: `preToolUse`(Shell) |
-| **宠物表现** | 变橙色/火焰色，火焰彩虹，极速飞行 |
-| **标签文字** | `running...` |
-
-### 6. `AgentSearching` — AI 本地搜索/阅读文件
-
-| 属性 | 值 |
-|------|-----|
-| **触发条件** | Agent 使用 Read/Grep/Glob/SemanticSearch 或 beforeReadFile |
-| **检测方式** | Hook: `preToolUse`(Read/Grep/Glob/SemanticSearch)、`beforeReadFile` |
-| **宠物表现** | 原色小猪 + **圆框眼镜**，无拖尾 |
-| **标签文字** | `searching` |
-
-### 7. `AgentWebSearch` — AI 在线/网络搜索
-
-| 属性 | 值 |
-|------|-----|
-| **触发条件** | Agent 使用名称含 web/fetch/firecrawl 的 MCP 工具 |
-| **检测方式** | Hook: `preToolUse`(MCP:xxx)，且 tool 名匹配 |
-| **宠物表现** | 原色小猪 + **墨镜** + 海浪色拖尾（上网冲浪） |
-| **标签文字** | `web search` |
-
-### 8. `Error` — 发现错误
-
-| 属性 | 值 |
-|------|-----|
-| **触发条件** | 工具执行失败或 Agent 循环以 error 状态结束 |
-| **检测方式** | Hook: `postToolUseFailure` 或 `stop`(status=error) |
-| **宠物表现** | 变暗红色，警告彩虹，剧烈抖动，⚠️ 浮动 |
-| **标签文字** | `error!` |
-
-### 9. `Success` — 成功
-
-| 属性 | 值 |
-|------|-----|
-| **触发条件** | Agent 循环成功完成 |
-| **检测方式** | Hook: `stop`(status=completed) |
-| **持续时间** | 3 秒后自动回退到 Idle |
-| **宠物表现** | 变金色，蓝白红彩虹，大幅飘动，❤️ 浮动 |
-| **标签文字** | `nice!` |
-
-### 10. `Sleeping` — 睡眠
-
-| 属性 | 值 |
-|------|-----|
-| **触发条件** | 5 分钟内无任何活动 |
-| **检测方式** | 无 hook 活动超过 5 分钟 |
-| **宠物表现** | 变灰色，所有动画暂停，💤 飘浮 |
-| **标签文字** | `zzZ` |
+每次 `preToolUse` 还会向 `in_flight_tools` 推入一条（`cluster` 与上表 `activity` 同形）；写类工具会尝试从 `tool_input` 解析路径写入 `focus_file`。
 
 ---
 
 ## 共享状态文件协议
 
-`nixie-hook` 二进制原子写入 `~/.nixie/state.json`，`nixie-pet` 通过轮询（150ms 间隔）读取。
+- **路径**：`~/.nixie/state.json`（`nixie-hook` 原子写入；`nixie-pet` 每帧读取）。
+- **投递**：**macOS** 上 hook 写入成功后向 `~/.nixie/pet.sock` 再写一行 JSON；**非 macOS** 无 UDS，仅依赖读盘 + 150ms 帧间隔。
+- **字段**：完整列表见 [architecture.md](architecture.md) 中「`state.json` 协议」一节。
+
+示例（字段随事件变化，**不必**同时存在）：
 
 ```json
 {
+  "seq": 42,
+  "schema_version": 1,
   "ts": 1710000000000,
   "activity": "agent_writing",
-  "session_active": true
+  "session_active": true,
+  "in_flight_tools": [
+    {
+      "tool_use_id": "toolu_xxx",
+      "cluster": "agent_writing",
+      "started_at_ms": 1710000000000
+    }
+  ],
+  "subagent_depth": 0,
+  "focus_file": "foo.rs",
+  "task_started_at_ms": 1710000000000,
+  "tool_success_ts": null,
+  "file_edit_success_ts": null
 }
 ```
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `ts` | `u64` | 事件时间戳 (ms since epoch) |
-| `activity` | `string` | 活动类型：`idle` / `agent_thinking` / `agent_writing` / `agent_running` / `agent_searching` / `agent_error` / `agent_success` |
-| `session_active` | `bool` | Agent session 是否活跃 |
-
-新鲜度判定：`ts` 距当前时间 < 10s 视为有效，否则回退到原生信号。
 
 ---
 
@@ -255,31 +140,33 @@ PetBrain 融合两层信号：
 ### 场景：用户让 AI 重构一个函数
 
 ```
-时间线  Hook 事件                           → activity            宠物状态
-──────────────────────────────────────────────────────────────────────────
-0s     sessionStart                        → idle (session=true)  AgentThinking
+时间线  Hook 事件                           → activity（主字段）   宠物 mood（典型）
+──────────────────────────────────────────────────────────────────────────────────
+0s     sessionStart                        → idle                 AgentThinking（会话活跃 + 3s 缓冲内）
 1s     afterAgentThought                   → agent_thinking       AgentThinking
-3s     preToolUse (Read)                   → agent_searching      AgentSearching
-4s     preToolUse (Grep)                   → agent_searching      AgentSearching
-5s     afterAgentThought                   → agent_thinking       AgentThinking
-6s     preToolUse (Write)                  → agent_writing        AgentWriting
-7s     afterFileEdit                       → （不改 activity；toast） AgentWriting
+3s     preToolUse (Read)                   → agent_searching      AgentSearching（在飞含 searching）
+6s     preToolUse (Write)                  → agent_writing        AgentWriting（在飞融合优先）
+7s     afterFileEdit                       → （activity 不变）     Toast；可能更新 focus_file
 8s     preToolUse (Shell)                  → agent_running        AgentRunning
-12s    afterShellExecution                 → idle (session=true)  AgentThinking
+12s    afterShellExecution                 → idle                 Thinking 缓冲内 → AgentThinking
 13s    stop (completed)                    → agent_success        Success
-16s    (3 秒超时)                                                  Idle
+16s    success_until 到期                    → idle                 Idle
 ```
 
-### 场景：AI 编辑引入了工具失败
+### 场景：工具失败
 
 ```
-时间线  Hook 事件                           → activity            宠物状态
+时间线  Hook 事件                           → activity            宠物 mood
 ──────────────────────────────────────────────────────────────────────────
-0s     preToolUse (Write)                  → agent_writing        AgentWriting
-1s     afterFileEdit                       → （不改 activity；toast） AgentWriting
-3s     preToolUse (Shell)                  → agent_running        AgentRunning
-5s     postToolUseFailure                  → agent_error          Error
-7s     preToolUse (Write)                  → agent_writing        AgentWriting
-9s     stop (completed)                    → agent_success        Success
-12s    (3 秒超时)                                                  Idle
+0s     preToolUse (Write)                  → agent_writing       AgentWriting
+3s     postToolUseFailure                  → agent_error         Error
+5s     preToolUse (Write)                  → agent_writing       AgentWriting
+9s     stop (completed)                    → agent_success       Success
 ```
+
+---
+
+## 更多
+
+- **完整 Hook 清单与产品语义**（含表格排版）：[hooks-to-pet-states.md](hooks-to-pet-states.md)。
+- **架构与落盘字段**：[architecture.md](architecture.md)。

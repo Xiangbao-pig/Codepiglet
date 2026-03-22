@@ -36,7 +36,9 @@
 | **`pet_overlay.rs`** | 确保 `postToolUse` Toast **不**误触主 mood 泄气；与「在飞为空」判定一致。 |
 | **单测** | 新增 `pet_core` / 或独立 `hook_reducer` 测试：给定 JSON 状态序列 → 期望 `PetMood` 序列（录几条真实场景）。 |
 
-### 1.3 表现层（`nyanpig.html` + 文档）
+### 1.3 表现层（Nyan Pig 片段 + 文档）
+
+> 表现层静态资源已拆为 `nixie-pet/src/` 下 `nyanpig-head.html`、`nyanpig.css`、`nyanpig-body.html`、`nyanpig.js`、`nyanpig-tail.html`，由 `nyanpig.rs` `concat!` 拼成整页；改样式/动效时编辑 **`nyanpig.css`**，改 DOM/SVG 时编辑 **`nyanpig-body.html`**。详见 [architecture.md](architecture.md) 模块表与「Nyan Pig 静态资源拆分」说明。
 
 | 工作项 | 说明 |
 |--------|------|

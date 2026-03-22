@@ -9,6 +9,7 @@ mod process_monitor;
 mod pet_core;
 mod pet_overlay;
 mod quotes;
+mod window_prefs;
 
 use std::borrow::Cow;
 use std::cell::RefCell;
@@ -136,6 +137,16 @@ enum UserEvent {
     DragWindow,
     /// 外圈穿透 + 全局光标轮询（macOS / Windows）
     TickPoll,
+    /// 右键像素菜单展开/收起：展开时外圈勿穿透，否则菜单项点不中
+    PixelMenuOpen { open: bool },
+    /// 右键「安全退出」：前端跑完告别动画后请求退出（仍持久化窗口位置）
+    QuitPet,
+}
+
+fn persist_window_outer_position(window: &tao::window::Window) {
+    if let Ok(pos) = window.outer_position() {
+        window_prefs::save_outer_position(pos);
+    }
 }
 
 fn main() {
@@ -156,6 +167,11 @@ fn main() {
         .build(&event_loop)
         .expect("failed to build window");
 
+    if let Some(pos) = window_prefs::load_saved_outer_position() {
+        window.set_outer_position(pos);
+    }
+    window_prefs::clamp_window_outer_to_any_monitor(&window);
+
     let state_proxy = event_loop.create_proxy();
     let pointer_tick_proxy = event_loop.create_proxy();
     #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -166,9 +182,12 @@ fn main() {
     let drag_proxy = event_loop.create_proxy();
     let feed_proxy = event_loop.create_proxy();
     let sound_proxy = event_loop.create_proxy();
+    let menu_open_proxy = event_loop.create_proxy();
+    let quit_proxy = event_loop.create_proxy();
 
     let overlay_shared: Arc<Mutex<PetOverlay>> = Arc::new(Mutex::new(PetOverlay::new()));
     let overlay_for_ipc = Arc::clone(&overlay_shared);
+    let (poke_tx, poke_rx) = std::sync::mpsc::channel::<()>();
     let boot_sound_enabled = overlay_shared
         .lock()
         .map(|o| o.sound_enabled())
@@ -195,6 +214,12 @@ fn main() {
                 "drag" => {
                     let _ = drag_proxy.send_event(UserEvent::DragWindow);
                 }
+                "menu_open" => {
+                    let _ = menu_open_proxy.send_event(UserEvent::PixelMenuOpen { open: true });
+                }
+                "menu_close" => {
+                    let _ = menu_open_proxy.send_event(UserEvent::PixelMenuOpen { open: false });
+                }
                 "feed" => {
                     let ok = overlay_for_ipc
                         .lock()
@@ -209,14 +234,30 @@ fn main() {
                         .unwrap_or(false);
                     let _ = sound_proxy.send_event(UserEvent::SoundSettingChanged { enabled });
                 }
+                "poke" => {
+                    let _ = poke_tx.send(());
+                }
+                "quit" => {
+                    let _ = quit_proxy.send_event(UserEvent::QuitPet);
+                }
+                "open_config_dir" => {
+                    window_prefs::open_nixie_data_dir();
+                }
                 _ => {}
             }
         })
         .build(&window)
         .expect("failed to build webview");
 
+    let dir_js = serde_json::to_string(
+        window_prefs::nixie_data_dir()
+            .to_string_lossy()
+            .as_ref(),
+    )
+    .unwrap_or_else(|_| "\"\"".to_string());
+    let ver_js = serde_json::to_string(env!("CARGO_PKG_VERSION")).unwrap_or_else(|_| "\"\"".to_string());
     let _ = webview.evaluate_script(&format!(
-        "window.__nixieSoundEnabled={0}; if(typeof setSoundEnabledFromRust==='function')setSoundEnabledFromRust({0}, false);",
+        "window.__nixieMeta={{version:{ver_js},configDir:{dir_js}}};window.__nixieSoundEnabled={0};if(typeof setSoundEnabledFromRust==='function')setSoundEnabledFromRust({0},false);",
         boot_sound_enabled
     ));
 
@@ -254,6 +295,10 @@ fn main() {
         let quotes = quotes::load_quotes();
 
         loop {
+            while poke_rx.try_recv().is_ok() {
+                brain.note_user_poke();
+            }
+
             let mut pending_git: Option<(Option<String>, GitUiSnapshot)> = None;
 
             let mut hook = hook_state::read_hook_state();
@@ -404,6 +449,25 @@ fn main() {
                     .borrow_mut()
                     .poll_frame(&window, &webview);
             }
+            Event::UserEvent(UserEvent::QuitPet) => {
+                persist_window_outer_position(&window);
+                *control_flow = ControlFlow::Exit;
+            }
+            Event::UserEvent(UserEvent::PixelMenuOpen { open }) => {
+                #[cfg(any(target_os = "macos", target_os = "windows"))]
+                {
+                    pet_pointer_state
+                        .borrow_mut()
+                        .set_pixel_menu_open(open);
+                    pet_pointer_state
+                        .borrow_mut()
+                        .poll_frame(&window, &webview);
+                }
+                #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+                {
+                    let _ = open;
+                }
+            }
             Event::UserEvent(UserEvent::DragWindow) => {
                 let _ = window.drag_window();
             }
@@ -535,6 +599,7 @@ fn main() {
                 event: WindowEvent::CloseRequested,
                 ..
             } => {
+                persist_window_outer_position(&window);
                 *control_flow = ControlFlow::Exit;
             }
             _ => {}
