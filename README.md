@@ -76,6 +76,16 @@ docs/           # 正经说明都在这儿
 
 ---
 
+## 小猪视觉素材（致谢）
+
+桌面小猪的**像素飞猪 / 彩虹猫风格视觉**参考并改编自 CodePen 上的公开作品，特此标明来源，避免不必要的误会：
+
+- [Nyan Cat — CodePen by aelweak](https://codepen.io/aelweak/pen/YzaLRGB)
+
+我们在其思路上做了大量本地化与改造（状态皮肤、气泡、交互、与 Rust/WebView 集成等），**与原作者作品并非 1:1 拷贝**；若你二次分发或商用，请同时遵守该 CodePen / 原作者的许可说明（如有）。
+
+---
+
 ## License
 
 MIT
