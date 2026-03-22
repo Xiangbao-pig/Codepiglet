@@ -46,6 +46,8 @@ Thumbs.db
 nixie-pet/assets/*
 !nixie-pet/assets/fonts/
 !nixie-pet/assets/fonts/**
+!nixie-pet/assets/icon/
+!nixie-pet/assets/icon/**
 
 # Firecrawl cache
 .firecrawl/

@@ -28,6 +28,8 @@ fn random_index(len: usize) -> usize {
 pub struct QuoteContext {
     /// `HookState.subagent_depth`；>0 时尝试 `{mood}_subagent` 列表。
     pub subagent_depth: u32,
+    /// 仅 Success 且本帧有终端庆祝时：`xs` / `s` / `m` / `l`（与 `CelebrationTier` 字符串一致）。
+    pub success_celebration_tier: Option<&'static str>,
 }
 
 /// 从 `~/.nixie/quotes.json` 读取配置（UTF-8），缺失的 key 用默认台词补全。
@@ -60,6 +62,21 @@ pub fn pick_quote(
     label: &str,
     ctx: &QuoteContext,
 ) -> String {
+    if mood_class == "success" {
+        if let Some("xs") = ctx.success_celebration_tier {
+            if ctx.subagent_depth > 0 {
+                let key = "success_xs_subagent";
+                if let Some(list) = quotes.get(key).filter(|v| !v.is_empty()) {
+                    let idx = random_index(list.len());
+                    return list[idx].clone();
+                }
+            }
+            if let Some(list) = quotes.get("success_xs").filter(|v| !v.is_empty()) {
+                let idx = random_index(list.len());
+                return list[idx].clone();
+            }
+        }
+    }
     if ctx.subagent_depth > 0 {
         let key = format!("{mood_class}_subagent");
         if let Some(list) = quotes.get(&key).filter(|v| !v.is_empty()) {
@@ -100,16 +117,16 @@ fn default_quotes() -> HashMap<String, Vec<String>> {
     m.insert(
         "idle".to_string(),
         vec![
-            "在呢在呢".to_string(),
-            "等指令中".to_string(),
-            "休息一下".to_string(),
-            "发会儿呆~".to_string(),
-            "放空一下".to_string(),
-            "歇歇".to_string(),
-            "待机中".to_string(),
-            "啥也不干".to_string(),
-            "摸鱼预备".to_string(),
-            "安静如猪".to_string(),
+            "在呢在呢，耳朵竖着呢～".to_string(),
+            "你一动本猪就跟上～".to_string(),
+            "蹄子歇会儿，脑子还在旁听～".to_string(),
+            "发会儿呆，云朵飘过脑门～".to_string(),
+            "放空放空……呼噜预备～".to_string(),
+            "趴会儿，看你屏幕光闪闪～".to_string(),
+            "就窝在这儿陪你～".to_string(),
+            "今天合法偷懒，理直气壮～".to_string(),
+            "摸鱼？本猪这是在养灵感～".to_string(),
+            "安静得像只好猪，其实偷看你呢～".to_string(),
         ],
     );
     m.insert(
@@ -236,6 +253,19 @@ fn default_quotes() -> HashMap<String, Vec<String>> {
         ],
     );
     m.insert(
+        "success_xs".to_string(),
+        vec![
+            "太轻松了～".to_string(),
+            "太简单了～".to_string(),
+            "唰一下就好了～".to_string(),
+            "还没热身呢～".to_string(),
+            "小 case 啦～".to_string(),
+            "轻松拿捏～".to_string(),
+            "快得像偷跑～".to_string(),
+            "这也太快了吧～".to_string(),
+        ],
+    );
+    m.insert(
         "sleeping".to_string(),
         vec![
             "zzZ".to_string(),
@@ -276,6 +306,15 @@ fn default_quotes() -> HashMap<String, Vec<String>> {
             "小号立功".to_string(),
         ],
     );
+    m.insert(
+        "success_xs_subagent".to_string(),
+        vec![
+            "分身也秒过～".to_string(),
+            "那边超轻松～".to_string(),
+            "子任务小菜一碟～".to_string(),
+            "小号：这也太快～".to_string(),
+        ],
+    );
 
     m
 }
@@ -292,9 +331,15 @@ mod tests {
             "thinking_subagent".to_string(),
             vec!["from_sub".to_string()],
         );
-        let ctx = QuoteContext { subagent_depth: 1 };
+        let ctx = QuoteContext {
+            subagent_depth: 1,
+            success_celebration_tier: None,
+        };
         assert_eq!(pick_quote(&m, "thinking", "fb", &ctx), "from_sub");
-        let ctx0 = QuoteContext { subagent_depth: 0 };
+        let ctx0 = QuoteContext {
+            subagent_depth: 0,
+            success_celebration_tier: None,
+        };
         assert_eq!(pick_quote(&m, "thinking", "fb", &ctx0), "plain");
     }
 }

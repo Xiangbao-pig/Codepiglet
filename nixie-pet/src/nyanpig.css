@@ -79,6 +79,19 @@ body {
     --fly: 0.4;
     --fly-h: 4px;
 }
+/* 溜猪：蓄力 7 秒前的轻提示（与 mood 肤色无关） */
+#pet[data-walk-phase="hover_intent"] {
+    outline: 1px dashed rgba(66, 165, 245, 0.5);
+    outline-offset: 2px;
+    border-radius: 2px;
+}
+/* 溜猪跟随：缩短 scaleX 转身与 look-shift 横移，减轻「回头完才能走」的前摇 */
+#pet[data-walk-phase="following"] .pet-visual {
+    transition: transform 0.24s cubic-bezier(0.4, 0, 0.2, 1);
+}
+#pet[data-walk-phase="following"] .pet-look-shift {
+    transition: transform 0.42s cubic-bezier(0.33, 0.92, 0.35, 1);
+}
 
 /* 先回中（原地）→ 转身 → 再横移；look-shift-recenter 仅用于快速归零位移 */
 .pet-look-shift {
@@ -198,6 +211,19 @@ body {
     --rainbow-opacity: 1;
     /* 与 coding 接近，避免切入 success 时 rw/jagger 周期骤变导致一帧「抽一下」 */
     --fly: 0.38; --fly-h: 5px;
+}
+
+/* 终端庆祝 xs：庆祝挂起期间恢复 idle 粉皮（无金橙、无彩虹） */
+/* data-success-trivial：摘掉庆祝属性后不再有 data-celebration-err，故粉皮不能只依赖 err=0 */
+#pet.mood-success[data-celebration-err="0"][data-celebration-tier="xs"],
+#pet.mood-success[data-success-trivial="1"] {
+    --body1: #f19183; --body2: #fcd8d7; --stains: #fac4b8;
+    --eyes-c: #0c0b0b; --ears-c: #f19183;
+    --snout1: #f79197; --snout2: #f66b79; --snout-holes: #e73b36;
+    --rc1: #e12523; --rc2: #dc8d30; --rc3: #deeb44;
+    --rc4: #01eb3e; --rc5: #138fe9; --rc6: #7127ee;
+    --rainbow-opacity: 0;
+    --fly: 0.4; --fly-h: 3px;
 }
 
 /* 与 idle 同色（不再灰化）；被子见 .sleep-blanket */
@@ -840,20 +866,24 @@ svg.pet-main-svg {
 }
 #pet.mood-thinking .indicator-bulb { display: block; }
 
-/* ════════ OVERLAY：任务完成庆祝分档（s / m / l；与 mood 独立） ════════ */
+/* ════════ OVERLAY：任务完成庆祝分档（xs / s / m / l；与 mood 独立） ════════ */
+@keyframes cele-ok-xs {
+    0%, 100% { transform: translate(0, 0) scale(1); }
+    45% { transform: translate(0, -2px) scale(1.025); }
+}
 @keyframes cele-ok-s {
     0%, 100% { transform: translate(0, 0) scale(1); }
-    35% { transform: translate(0, -3px) scale(1.04); }
+    35% { transform: translate(0, -4px) scale(1.045); }
 }
 @keyframes cele-ok-m {
     0%, 100% { transform: translate(0, 0) scale(1); }
-    25% { transform: translate(0, -6px) scale(1.07); }
-    50% { transform: translate(0, -2px) scale(1.05); }
+    25% { transform: translate(0, -7px) scale(1.08); }
+    50% { transform: translate(0, -3px) scale(1.06); }
 }
-/* 避免父层 filter 与 SVG 渐变/填色在 WKWebView 中同帧错层（周期末闪一帧「经典彩虹+粉猪」） */
+/* 避免父层 filter 与 SVG 渐变/填色在 WKWebView 中同帧错层（周期末闪一帧「经典彩虹+粉猪」）；金光仅加在庆祝层 */
 @keyframes cele-ok-l {
     0% { transform: scale(1); }
-    40% { transform: scale(1.1); }
+    40% { transform: scale(1.12); }
     100% { transform: scale(1); }
 }
 @keyframes cele-err-s {
@@ -871,14 +901,28 @@ svg.pet-main-svg {
     15% { transform: translateX(-5px); }
     45% { transform: translateX(5px); }
 }
-#pet[data-celebration-err="0"][data-celebration-tier="s"] .pet-celebrate-layer { animation: cele-ok-s 0.42s ease-out 1 both; }
-#pet[data-celebration-err="0"][data-celebration-tier="m"] .pet-celebrate-layer { animation: cele-ok-m 0.55s ease-out 1 both; }
-#pet[data-celebration-err="0"][data-celebration-tier="l"] .pet-celebrate-layer { animation: cele-ok-l 0.95s ease-out 1 both; }
+#pet[data-celebration-err="0"][data-celebration-tier="xs"] .pet-celebrate-layer { animation: cele-ok-xs 0.34s ease-out 1 both; }
+#pet[data-celebration-err="0"][data-celebration-tier="s"] .pet-celebrate-layer { animation: cele-ok-s 0.44s ease-out 1 both; }
+#pet[data-celebration-err="0"][data-celebration-tier="m"] .pet-celebrate-layer { animation: cele-ok-m 0.6s ease-out 1 both; }
+#pet.mood-success[data-celebration-err="0"][data-celebration-tier="l"] .pet-celebrate-layer {
+    animation: cele-ok-l 1.05s ease-out 1 both;
+    filter: drop-shadow(0 0 3px #ffe082) drop-shadow(0 0 8px rgba(255, 193, 7, 0.55)) drop-shadow(0 0 14px rgba(255, 224, 130, 0.35));
+}
 #pet[data-celebration-err="1"][data-celebration-tier="s"] .pet-celebrate-layer { animation: cele-err-s 0.45s ease-out 1 both; }
 #pet[data-celebration-err="1"][data-celebration-tier="m"] .pet-celebrate-layer { animation: cele-err-m 0.55s ease-out 1 both; }
 #pet[data-celebration-err="1"][data-celebration-tier="l"] .pet-celebrate-layer { animation: cele-err-l 0.75s ease-out 1 both; }
 
-/* 暂停摆动延后由 JS 挂 `data-celebration-pause-motion`（双 rAF）：避免与 tier 同帧生效时庆祝关键帧在 0% 无位移、整猪像冻住 */
+@media (prefers-reduced-motion: reduce) {
+    #pet[data-celebration-err="0"] .pet-celebrate-layer,
+    #pet[data-celebration-err="1"] .pet-celebrate-layer {
+        animation: none !important;
+    }
+    #pet.mood-success[data-celebration-err="0"][data-celebration-tier="l"] .pet-celebrate-layer {
+        filter: none !important;
+    }
+}
+
+/* 暂停摆动由 JS 在 `data-celebration-tier` 挂起约 CELEBRATION_PAUSE_MS 后再挂 `data-celebration-pause-motion`：避免庆祝 0% 附近位移几乎为 0 时先停掉 jagger/彩虹，拖尾与猪看起来「先冻住」 */
 #pet[data-celebration-pause-motion="1"] .pet-motion-wrap {
     animation-play-state: paused;
 }

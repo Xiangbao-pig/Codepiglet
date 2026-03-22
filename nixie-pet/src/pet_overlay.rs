@@ -6,6 +6,8 @@
 //! 2. **某子模块逻辑异常** → 该 tick 跳过相关事件，其它 Overlay 仍执行。
 //! 3. **前端脚本失败** → `main` 里 `evaluate_script` 已忽略错误，Core 不受影响。
 
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -18,17 +20,20 @@ use crate::pet_core::{NativeState, PetMood};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CelebrationTier {
-    /// 轻快 / 绊一下
+    /// 超快收工（原色庆祝）
+    Xs,
+    /// 轻快 / 20s–2m
     S,
-    /// 硬仗 / 胶着
+    /// 硬仗 / 2m–8m
     M,
-    /// 鏖战 / 长失败
+    /// 鏖战 / ≥8m
     L,
 }
 
 impl CelebrationTier {
     pub fn as_str(self) -> &'static str {
         match self {
+            CelebrationTier::Xs => "xs",
             CelebrationTier::S => "s",
             CelebrationTier::M => "m",
             CelebrationTier::L => "l",
@@ -36,8 +41,9 @@ impl CelebrationTier {
     }
 }
 
-/// 成功：&lt;2m / 2m–8m / ≥8m
-const SUCCESS_M_MS: u64 = 120_000;
+/// 成功：&lt;20s / 20s–2m / 2m–8m / ≥8m
+const SUCCESS_XS_MS: u64 = 20_000;
+const SUCCESS_S_MS: u64 = 120_000;
 const SUCCESS_L_MS: u64 = 480_000;
 
 /// 失败：&lt;45s / 45s–2m / ≥2m
@@ -46,8 +52,9 @@ const ERROR_L_MS: u64 = 120_000;
 
 fn tier_for_success(ms: u64) -> CelebrationTier {
     match ms {
-        0..SUCCESS_M_MS => CelebrationTier::S,
-        SUCCESS_M_MS..SUCCESS_L_MS => CelebrationTier::M,
+        0..SUCCESS_XS_MS => CelebrationTier::Xs,
+        SUCCESS_XS_MS..SUCCESS_S_MS => CelebrationTier::S,
+        SUCCESS_S_MS..SUCCESS_L_MS => CelebrationTier::M,
         _ => CelebrationTier::L,
     }
 }
@@ -64,6 +71,20 @@ fn tier_for_error(ms: u64) -> CelebrationTier {
 
 const FEED_COOLDOWN: Duration = Duration::from_secs(30);
 
+/// 打字「哒哒哒」台词：仅约 5% 展示，用 `pulse_ts` 哈希决定（无 rand、同 ts 结果稳定）。
+const USER_TYPING_LINE_ROLL_MAX: u64 = 100;
+const USER_TYPING_LINE_THRESHOLD: u64 = 5;
+
+/// 蹦跶 + Toast 音效：每 N 次**新**打字脉冲触发一次（内存计数，进程重启归零）。
+const USER_TYPING_FEEDBACK_EVERY: u64 = 3;
+
+fn user_typing_line_roll(pulse_ts: u64) -> bool {
+    let mut h = DefaultHasher::new();
+    pulse_ts.hash(&mut h);
+    b"nixie.user_typing.toast.v1".hash(&mut h);
+    (h.finish() % USER_TYPING_LINE_ROLL_MAX) < USER_TYPING_LINE_THRESHOLD
+}
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct OverlayPersist {
     #[serde(default)]
@@ -71,6 +92,9 @@ struct OverlayPersist {
     /// 小猪 Web Audio 8bit 音效；默认关闭，写入 `~/.nixie/overlay.json`。
     #[serde(default)]
     sound_enabled: bool,
+    /// 右键菜单「溜猪」开关；Following 状态不落盘（重启后为 Idle）。
+    #[serde(default)]
+    walk_enabled: bool,
 }
 
 fn overlay_persist_path() -> std::path::PathBuf {
@@ -88,7 +112,6 @@ fn load_overlay_persist() -> OverlayPersist {
         .unwrap_or_default()
 }
 
-#[allow(dead_code)] // register_feed / 菜单接入后使用
 fn save_overlay_persist(p: &OverlayPersist) {
     let path = overlay_persist_path();
     if let Some(dir) = path.parent() {
@@ -102,15 +125,12 @@ fn save_overlay_persist(p: &OverlayPersist) {
 // ── 遛猪（状态机骨架，后续接鼠标/窗口 IPC） ──
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)] // 遛猪状态机占位，后续 HoverIntent / Following 会用到
 pub enum WalkPhase {
     /// 功能关闭或未启用
     Off,
-    /// 开启但未进入跟随
+    /// 开启但未进入跟随（蓄力态仅前端 `data-walk-phase=hover_intent`）
     Idle,
-    /// 鼠标在窗口上方停留中（预留）
-    HoverIntent,
-    /// 窗口跟随鼠标（预留）
+    /// 窗口向光标方向移动（macOS / Windows）
     Following,
 }
 
@@ -121,7 +141,8 @@ pub enum OverlayEvent {
     /// Hook 微反馈 Toast（不切换 mood）
     ToolSuccessToast { message: String },
     FileEditToast { message: String },
-    UserTypingToast { message: String },
+    /// 用户打字脉冲：每次新脉冲必达前端；`feedback` 为真时蹦跶+Toast 音效（每 3 次一次）；`show_line` 为真时展示「哒哒哒」台词（约 5%）。
+    UserTypingPulse { show_line: bool, feedback: bool },
     /// 任务完成或长失败分档（表现层；与当前 mood 可叠加）
     Celebration {
         tier: CelebrationTier,
@@ -145,6 +166,8 @@ pub struct PetOverlay {
     last_tool_success_ts: Option<u64>,
     last_file_edit_ts: Option<u64>,
     last_user_typing_ts: Option<u64>,
+    /// 已处理的打字脉冲计数（去重后递增），用于「每 N 次」蹦跶/音效。
+    user_typing_pulse_count: u64,
 
     /// 已为该次终端事件（`hook.ts` 对应的那次 `stop` 写入）庆祝过，避免重复。
     last_celebrated_terminal_hook_ts: Option<u64>,
@@ -180,15 +203,21 @@ impl PetOverlay {
         } else {
             None
         };
+        let walk_phase = if loaded.walk_enabled {
+            WalkPhase::Idle
+        } else {
+            WalkPhase::Off
+        };
         Self {
             last_tool_success_ts: None,
             last_file_edit_ts: None,
             last_user_typing_ts,
+            user_typing_pulse_count: 0,
             last_celebrated_terminal_hook_ts: None,
             last_feed_at,
             last_reported_can_feed: can_feed,
-            walk_phase: WalkPhase::Off,
-            last_reported_walk: WalkPhase::Off,
+            walk_phase,
+            last_reported_walk: walk_phase,
             sound_enabled: loaded.sound_enabled,
         }
     }
@@ -202,8 +231,42 @@ impl PetOverlay {
         self.sound_enabled = !self.sound_enabled;
         let mut p = load_overlay_persist();
         p.sound_enabled = self.sound_enabled;
+        p.walk_enabled = self.walk_phase != WalkPhase::Off;
         save_overlay_persist(&p);
         self.sound_enabled
+    }
+
+    pub fn walk_phase(&self) -> WalkPhase {
+        self.walk_phase
+    }
+
+    /// 右键菜单切换；写入 `walk_enabled`，并回到 Idle（非 Following）。
+    pub fn toggle_walk(&mut self) -> WalkPhase {
+        let mut p = load_overlay_persist();
+        p.walk_enabled = !p.walk_enabled;
+        p.sound_enabled = self.sound_enabled;
+        save_overlay_persist(&p);
+        self.walk_phase = if p.walk_enabled {
+            WalkPhase::Idle
+        } else {
+            WalkPhase::Off
+        };
+        self.last_reported_walk = self.walk_phase;
+        self.walk_phase
+    }
+
+    /// 开始 / 结束跟随（仅当已开启溜猪且非 Off）。
+    pub fn set_walk_following(&mut self, following: bool) -> WalkPhase {
+        if self.walk_phase == WalkPhase::Off {
+            return WalkPhase::Off;
+        }
+        self.walk_phase = if following {
+            WalkPhase::Following
+        } else {
+            WalkPhase::Idle
+        };
+        self.last_reported_walk = self.walk_phase;
+        self.walk_phase
     }
 
     fn can_feed_now(last_feed_at: Option<Instant>) -> bool {
@@ -222,19 +285,10 @@ impl PetOverlay {
         let mut p = load_overlay_persist();
         p.last_feed_at_ms = now_epoch_ms();
         p.sound_enabled = self.sound_enabled;
+        p.walk_enabled = self.walk_phase != WalkPhase::Off;
         save_overlay_persist(&p);
         self.last_reported_can_feed = false;
         true
-    }
-
-    /// 遛猪开关（后续接设置/IPC）。
-    #[allow(dead_code)]
-    pub fn set_walk_enabled(&mut self, enabled: bool) {
-        self.walk_phase = if enabled {
-            WalkPhase::Idle
-        } else {
-            WalkPhase::Off
-        };
     }
 
     /// 每帧调用：根据 hook、mood 迁移产生 Overlay 事件。**不修改 PetMood**。
@@ -263,9 +317,10 @@ impl PetOverlay {
         let pulse = crate::native_pulse::read_native_pulse();
         if pulse.ts > 0 && Some(pulse.ts) != self.last_user_typing_ts && pulse.kind == "user_typing" {
             self.last_user_typing_ts = Some(pulse.ts);
-            out.push(OverlayEvent::UserTypingToast {
-                message: "哒哒哒".to_string(),
-            });
+            self.user_typing_pulse_count = self.user_typing_pulse_count.saturating_add(1);
+            let show_line = user_typing_line_roll(pulse.ts);
+            let feedback = self.user_typing_pulse_count % USER_TYPING_FEEDBACK_EVERY == 0;
+            out.push(OverlayEvent::UserTypingPulse { show_line, feedback });
         }
 
         // ── 任务耗时：来自 hook（beforeSubmitPrompt 写入的 task_started_at_ms） ──

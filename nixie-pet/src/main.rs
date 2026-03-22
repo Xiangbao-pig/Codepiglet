@@ -1,3 +1,5 @@
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 mod nyanpig;
 mod pet_pointer;
 mod hook_state;
@@ -141,6 +143,12 @@ enum UserEvent {
     PixelMenuOpen { open: bool },
     /// 右键「安全退出」：前端跑完告别动画后请求退出（仍持久化窗口位置）
     QuitPet,
+    /// 遛猪阶段与 `overlay.json` 开关同步到 WebView
+    WalkPhaseSync { phase: WalkPhase },
+    /// 遛猪开始/结束/开关时清空光标速度样本
+    WalkResetCursor,
+    /// 前端：转身完成且朝向已对准后才允许跟窗移动
+    WalkChaseSet { allow: bool },
 }
 
 fn persist_window_outer_position(window: &tao::window::Window) {
@@ -155,10 +163,16 @@ fn main() {
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| ".".into()));
 
-    let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
+    let mut event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
+    #[cfg(target_os = "macos")]
+    {
+        use tao::platform::macos::EventLoopExtMacOS;
+        // 从终端 / Cursor 集成终端启动时不抢前台，减少终端被系统强行置前的干扰。
+        event_loop.set_activate_ignoring_other_apps(true);
+    }
 
     let window = WindowBuilder::new()
-        .with_title("Nixie Pet")
+        .with_title("Codepet")
         .with_transparent(true)
         .with_decorations(false)
         .with_always_on_top(true)
@@ -176,7 +190,7 @@ fn main() {
     let pointer_tick_proxy = event_loop.create_proxy();
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     thread::spawn(move || loop {
-        thread::sleep(Duration::from_millis(32));
+        thread::sleep(Duration::from_millis(16));
         let _ = pointer_tick_proxy.send_event(UserEvent::TickPoll);
     });
     let drag_proxy = event_loop.create_proxy();
@@ -184,6 +198,7 @@ fn main() {
     let sound_proxy = event_loop.create_proxy();
     let menu_open_proxy = event_loop.create_proxy();
     let quit_proxy = event_loop.create_proxy();
+    let state_proxy_ipc = state_proxy.clone();
 
     let overlay_shared: Arc<Mutex<PetOverlay>> = Arc::new(Mutex::new(PetOverlay::new()));
     let overlay_for_ipc = Arc::clone(&overlay_shared);
@@ -211,6 +226,36 @@ fn main() {
         .with_html(nyanpig::HTML)
         .with_ipc_handler(move |msg: wry::http::Request<String>| {
             match msg.body().as_str() {
+                "walk_toggle" => {
+                    let phase = overlay_for_ipc
+                        .lock()
+                        .map(|mut o| o.toggle_walk())
+                        .unwrap_or(WalkPhase::Off);
+                    let _ = state_proxy_ipc.send_event(UserEvent::WalkPhaseSync { phase });
+                    let _ = state_proxy_ipc.send_event(UserEvent::WalkResetCursor);
+                }
+                "walk_start" => {
+                    let phase = overlay_for_ipc
+                        .lock()
+                        .map(|mut o| o.set_walk_following(true))
+                        .unwrap_or(WalkPhase::Off);
+                    let _ = state_proxy_ipc.send_event(UserEvent::WalkPhaseSync { phase });
+                    let _ = state_proxy_ipc.send_event(UserEvent::WalkResetCursor);
+                }
+                "walk_stop" => {
+                    let phase = overlay_for_ipc
+                        .lock()
+                        .map(|mut o| o.set_walk_following(false))
+                        .unwrap_or(WalkPhase::Off);
+                    let _ = state_proxy_ipc.send_event(UserEvent::WalkPhaseSync { phase });
+                    let _ = state_proxy_ipc.send_event(UserEvent::WalkResetCursor);
+                }
+                "walk_chase_1" => {
+                    let _ = state_proxy_ipc.send_event(UserEvent::WalkChaseSet { allow: true });
+                }
+                "walk_chase_0" => {
+                    let _ = state_proxy_ipc.send_event(UserEvent::WalkChaseSet { allow: false });
+                }
                 "drag" => {
                     let _ = drag_proxy.send_event(UserEvent::DragWindow);
                 }
@@ -256,9 +301,20 @@ fn main() {
     )
     .unwrap_or_else(|_| "\"\"".to_string());
     let ver_js = serde_json::to_string(env!("CARGO_PKG_VERSION")).unwrap_or_else(|_| "\"\"".to_string());
+    let boot_walk_phase = overlay_shared
+        .lock()
+        .map(|o| o.walk_phase())
+        .unwrap_or(WalkPhase::Off);
+    let walk_sup = if cfg!(any(target_os = "macos", target_os = "windows")) {
+        "true"
+    } else {
+        "false"
+    };
     let _ = webview.evaluate_script(&format!(
-        "window.__nixieMeta={{version:{ver_js},configDir:{dir_js}}};window.__nixieSoundEnabled={0};if(typeof setSoundEnabledFromRust==='function')setSoundEnabledFromRust({0},false);",
-        boot_sound_enabled
+        "window.__nixieMeta={{version:{ver_js},configDir:{dir_js}}};window.__nixieSoundEnabled={0};window.__nixieWalkSupported={1};if(typeof setSoundEnabledFromRust==='function')setSoundEnabledFromRust({0},false);if(typeof setWalkPhase==='function')setWalkPhase('{2}');",
+        boot_sound_enabled,
+        walk_sup,
+        walk_phase_js(boot_walk_phase)
     ));
 
     #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -369,8 +425,20 @@ fn main() {
             if mood_fires {
                 let mood_class = mood_css_class(brain.mood);
                 let label = brain.mood.label();
+                let success_celebration_tier = celebration_peeled.and_then(|(tier, _, is_error)| {
+                    if is_error {
+                        None
+                    } else {
+                        Some(tier.as_str())
+                    }
+                });
                 let qctx = quotes::QuoteContext {
                     subagent_depth: hook.subagent_depth,
+                    success_celebration_tier: if mood_class == "success" {
+                        success_celebration_tier
+                    } else {
+                        None
+                    },
                 };
                 let quote = quotes::pick_quote(&quotes, mood_class, label, &qctx);
                 let focus_file = hook.focus_file.clone();
@@ -445,9 +513,39 @@ fn main() {
 
         match event {
             Event::UserEvent(UserEvent::TickPoll) => {
+                let walk_following = overlay_shared
+                    .lock()
+                    .map(|o| o.walk_phase() == WalkPhase::Following)
+                    .unwrap_or(false);
+                // 先跟窗（用上一帧 walk_chase），再 poll 更新转身与下一帧 chase —— 溜猪「先回头再移动」
+                let stop_fast = {
+                    let mut ptr = pet_pointer_state.borrow_mut();
+                    let stop = if walk_following {
+                        ptr.apply_walk_follow(&window) == pet_pointer::WalkFollowResult::StopFast
+                    } else {
+                        false
+                    };
+                    ptr.poll_frame(&window, &webview, walk_following);
+                    stop
+                };
+                if stop_fast {
+                    let _ = overlay_shared
+                        .lock()
+                        .map(|mut o| o.set_walk_following(false));
+                    let _ = webview.evaluate_script("setWalkPhase('idle')");
+                }
+            }
+            Event::UserEvent(UserEvent::WalkPhaseSync { phase }) => {
+                let p = walk_phase_js(phase);
+                let _ = webview.evaluate_script(&format!("setWalkPhase('{}')", p));
+            }
+            Event::UserEvent(UserEvent::WalkResetCursor) => {
+                pet_pointer_state.borrow_mut().reset_walk_cursor();
+            }
+            Event::UserEvent(UserEvent::WalkChaseSet { allow }) => {
                 pet_pointer_state
                     .borrow_mut()
-                    .poll_frame(&window, &webview);
+                    .set_chase_move_allowed(allow);
             }
             Event::UserEvent(UserEvent::QuitPet) => {
                 persist_window_outer_position(&window);
@@ -456,12 +554,16 @@ fn main() {
             Event::UserEvent(UserEvent::PixelMenuOpen { open }) => {
                 #[cfg(any(target_os = "macos", target_os = "windows"))]
                 {
+                    let wf = overlay_shared
+                        .lock()
+                        .map(|o| o.walk_phase() == WalkPhase::Following)
+                        .unwrap_or(false);
                     pet_pointer_state
                         .borrow_mut()
                         .set_pixel_menu_open(open);
                     pet_pointer_state
                         .borrow_mut()
-                        .poll_frame(&window, &webview);
+                        .poll_frame(&window, &webview, wf);
                 }
                 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
                 {
@@ -572,9 +674,11 @@ fn main() {
                     let msg_escaped = message.replace('\\', "\\\\").replace('"', "\\\"");
                     let _ = webview.evaluate_script(&format!("showToast(\"{}\")", msg_escaped));
                 }
-                OverlayEvent::UserTypingToast { message } => {
-                    let msg_escaped = message.replace('\\', "\\\\").replace('"', "\\\"");
-                    let _ = webview.evaluate_script(&format!("showToast(\"{}\")", msg_escaped));
+                OverlayEvent::UserTypingPulse { show_line, feedback } => {
+                    let _ = webview.evaluate_script(&format!(
+                        "showUserTypingPulse({}, {})",
+                        show_line, feedback
+                    ));
                 }
                 OverlayEvent::Celebration {
                     tier,
@@ -611,7 +715,6 @@ fn walk_phase_js(p: WalkPhase) -> &'static str {
     match p {
         WalkPhase::Off => "off",
         WalkPhase::Idle => "idle",
-        WalkPhase::HoverIntent => "hover_intent",
         WalkPhase::Following => "following",
     }
 }

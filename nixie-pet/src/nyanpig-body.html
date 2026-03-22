@@ -2,7 +2,7 @@
 </head>
 <body>
 <div id="pet-look-field" class="pet-look-field">
-<div id="pet" class="mood-idle" data-facing="right">
+<div id="pet" class="mood-idle" data-facing="right" data-walk-phase="off">
     <svg xmlns="http://www.w3.org/2000/svg" width="0" height="0" aria-hidden="true" style="position:absolute;overflow:hidden;pointer-events:none;width:0;height:0">
         <defs>
             <!-- 阶梯圆角 + 底中像素尾巴；viewBox 120×30 -->
@@ -172,6 +172,7 @@
 <div id="context-menu" class="pixel-menu" hidden role="menu">
     <button type="button" class="pixel-menu-item" id="menu-pomo-toggle" role="menuitem">番茄钟 · 开始</button>
     <button type="button" class="pixel-menu-item" id="menu-sound-toggle" role="menuitem">小猪音效 · 关</button>
+    <button type="button" class="pixel-menu-item" id="menu-walk-toggle" role="menuitem">溜猪 · 关</button>
     <button type="button" class="pixel-menu-item" id="menu-feed" role="menuitem">投喂小苹果</button>
     <button type="button" class="pixel-menu-item menu-folder" id="menu-open-folder" role="menuitem">打开配置目录</button>
     <button type="button" class="pixel-menu-item" id="menu-about" role="menuitem">关于小猪…</button>
@@ -180,7 +181,7 @@
 </div>
 <div id="about-sheet" class="about-sheet" hidden role="dialog" aria-modal="true" aria-labelledby="about-title">
     <div class="about-sheet-panel">
-        <div id="about-title" class="about-sheet-title">Nixie</div>
+        <div id="about-title" class="about-sheet-title">Codepet</div>
         <div class="about-sheet-version" id="about-version-line"></div>
         <div class="about-sheet-path" id="about-path-line"></div>
         <p class="about-sheet-note" id="about-note-line"></p>

@@ -1,10 +1,29 @@
 window.__nixieSoundEnabled = false;
 var bubbleHideTimer = null;
 var celebrationClearTimer = null;
-/** 与 `applyCelebrationTier` 内双 rAF 配合：清除庆祝时递增，避免过期的 rAF 再挂上 pause-motion */
+/** 与 `applyCelebrationTier` 配合：清除庆祝时递增，避免过期的 pause 定时器再挂上 */
+var celebrationPauseTimer = null;
 var celebrationMotionEpoch = 0;
-/** 与 pet_core::SUCCESS_HOLD_MS 保持同步：`data-celebration-tier` 挂起时长；暂停摆动由 `data-celebration-pause-motion` 延后一帧组合再挂上 */
+/** 与 pet_core::SUCCESS_HOLD_MS 保持同步：`data-celebration-tier` 挂起时长 */
 var CELEBRATION_ATTR_HOLD_MS = 4500;
+/** 庆祝 layer 生效后再暂停 jagger/彩虹，避免 0% 关键帧附近与双 rAF 叠加造成「拖尾与猪先冻住」 */
+var CELEBRATION_PAUSE_MS = 100;
+/**
+ * 庆祝动画结束后（animationend）解除 pause-motion，避免与 CELEBRATION_ATTR_HOLD_MS 同长导致整段 success 冻结。
+ * prefers-reduced-motion 下不挂 pause（见 celebrationPauseTimer）。
+ */
+function wireCelebrationPauseRelease(pet, capturedEpoch) {
+    var layer = pet.querySelector('.pet-celebrate-layer');
+    if (!layer) return;
+    function onEnd(ev) {
+        var n = ev && ev.animationName != null ? String(ev.animationName) : '';
+        if (n.indexOf('cele-') === -1) return;
+        if (capturedEpoch !== celebrationMotionEpoch) return;
+        layer.removeEventListener('animationend', onEnd);
+        pet.removeAttribute('data-celebration-pause-motion');
+    }
+    layer.addEventListener('animationend', onEnd);
+}
 /** 框样式已透明；要再看绿/红参考时在 CSS .pet-look-debug 改回颜色，并置 true */
 var SHOW_PET_LOOK_FIELD_DEBUG = false;
 /** 转身后再横移的像素（越大越像在「跑过去」） */
@@ -76,10 +95,13 @@ function finishLookFlipOrAdvance() {
 
 function armLookFlipSafetyTimer() {
     clearLookFlipSafetyTimer();
+    var pet = document.getElementById('pet');
+    var ms =
+        pet && pet.getAttribute('data-walk-phase') === 'following' ? 360 : 900;
     lookFlipSafetyTimer = setTimeout(function() {
         lookFlipSafetyTimer = null;
         if (lookAnimPhase === 'turning') finishLookFlipOrAdvance();
-    }, 900);
+    }, ms);
 }
 
 /** 开始转身：若 DOM 朝向已是目标，浏览器不会触发 transitionend，必须直接 finish */
@@ -103,7 +125,12 @@ function scheduleLookFacingTurn(target) {
     }
     if (target === lookIdleFacing) return;
     lookIdleFacing = target;
-    if (Math.abs(getLookNudgePx()) < 1) {
+    var walkFollow = petEl.getAttribute('data-walk-phase') === 'following';
+    if (walkFollow || Math.abs(getLookNudgePx()) < 1) {
+        if (walkFollow) {
+            petEl.style.setProperty('--pet-look-nudge', '0px');
+            if (petLookShiftEl) petLookShiftEl.classList.remove('look-shift-recenter');
+        }
         tryStartLookFlip(petEl);
         return;
     }
@@ -144,6 +171,10 @@ function onPetLookShiftTransitionEnd(e) {
     }
 }
 
+/** 溜猪：与平常转头分流；先转身再挪窗（Rust 侧 chase_move_allowed） */
+var WALK_CHASE_HYST_PX = 5;
+var lastWalkChasePosted = null;
+
 /** sleeping 时不跟鼠标转头（生活感：睡着了）；被点击唤醒后 Rust 切回 Idle 即恢复 */
 function petMoodSkipsPointerLook() {
     var pet = document.getElementById('pet');
@@ -152,6 +183,8 @@ function petMoodSkipsPointerLook() {
 
 /** Rust：光标离开窗口外圈时调用，避免 lastPointer 停在外圈外仍驱动朝向 */
 function nativePointerOutside() {
+    var pet = document.getElementById('pet');
+    if (pet && pet.getAttribute('data-walk-phase') === 'following') return;
     pointerPollInOuter = false;
 }
 
@@ -159,9 +192,50 @@ function nativePointerOutside() {
 function nativePointerLook(lx, ly) {
     if (petMoodSkipsPointerLook()) return;
     pointerPollInOuter = true;
+    var pet = document.getElementById('pet');
+    if (pet && pet.getAttribute('data-walk-phase') === 'following') {
+        if (petFacingRaf) {
+            cancelAnimationFrame(petFacingRaf);
+            petFacingRaf = 0;
+        }
+        walkChasePointer(lx, ly);
+        return;
+    }
     lastPointer.x = lx;
     lastPointer.y = ly;
     if (!petFacingRaf) petFacingRaf = requestAnimationFrame(flushPetFacingFromPointer);
+}
+
+/**
+ * 溜猪专用：先 scheduleLookFacingTurn 对准光标侧，再 IPC 允许 Rust 挪窗（与 flushPetFacingFromPointer 分流）
+ */
+function walkChasePointer(lx, ly) {
+    lastPointer.x = lx;
+    lastPointer.y = ly;
+    var pet = document.getElementById('pet');
+    if (!pet) return;
+    var r = pet.getBoundingClientRect();
+    if (r.width <= 0 || r.height <= 0) return;
+    var cx = r.left + r.width * 0.5;
+    var curFacing = pet.getAttribute('data-facing') === 'left' ? 'left' : 'right';
+    var desired;
+    if (lx < cx - WALK_CHASE_HYST_PX) desired = 'left';
+    else if (lx > cx + WALK_CHASE_HYST_PX) desired = 'right';
+    else desired = curFacing;
+
+    if (lookAnimPhase === 'idle' && pet.getAttribute('data-facing') !== desired) {
+        scheduleLookFacingTurn(desired);
+    }
+
+    var allow =
+        lookAnimPhase === 'idle' &&
+        pet.getAttribute('data-facing') === desired;
+    if (lastWalkChasePosted !== allow) {
+        lastWalkChasePosted = allow;
+        try {
+            window.ipc.postMessage(allow ? 'walk_chase_1' : 'walk_chase_0');
+        } catch (e) {}
+    }
 }
 
 function flushPetFacingFromPointer() {
@@ -200,6 +274,8 @@ function flushPetFacingFromPointer() {
 
 function queuePetFacingFromPointer(e) {
     if (petMoodSkipsPointerLook()) return;
+    var pet = document.getElementById('pet');
+    if (pet && pet.getAttribute('data-walk-phase') === 'following') return;
     lastPointer.x = e.clientX;
     lastPointer.y = e.clientY;
     if (!petFacingRaf) petFacingRaf = requestAnimationFrame(flushPetFacingFromPointer);
@@ -341,6 +417,45 @@ function playIdleHumHumCue() {
     }
 }
 
+/**
+ * 自娱自乐闲置动作 8bit（与 REGISTRY id 对齐）；仅当用户开启小猪音效且 ctx.soundOn 时由 onStart 调用。
+ */
+function playIdlePlayCue(id) {
+    if (!isNixieSoundOn()) return;
+    resumeNixieAudioIfNeeded();
+    switch (id) {
+        case 'hum':
+            playIdleHumHumCue();
+            return;
+        case 'spin':
+            /* 转圈：一圈上扬琶音 */
+            playSquareSequence([523, 659, 784, 1046, 1318], 46, 0.054);
+            return;
+        case 'peek':
+            /* 张望：左右探头 */
+            playSquareSequence([659, 523, 698, 523], 68, 0.05);
+            return;
+        case 'nod':
+            /* 点头：两下轻敲 */
+            playSquareSequence([392, 349], 100, 0.042);
+            return;
+        case 'morning':
+            playSquareSequence([523, 659, 784], 72, 0.046);
+            return;
+        case 'evening':
+            playSquareSequence([784, 659, 523], 74, 0.046);
+            return;
+        case 'weekend':
+            playSquareSequence([523, 659, 523, 784], 58, 0.048);
+            return;
+        case 'late':
+            playSquareSequence([311, 349, 392], 88, 0.038);
+            return;
+        default:
+            return;
+    }
+}
+
 function playMoodCue(mood) {
     if (!isNixieSoundOn()) return;
     resumeNixieAudioIfNeeded();
@@ -364,12 +479,62 @@ function playMoodCue(mood) {
     } else if (m === 'error') {
         playSquareSequence([196, 185, 175], 80, 0.08);
     } else if (m === 'success') {
-        playSquareSequence([523, 659, 784, 1046], 55, 0.06);
+        playTaskSuccessTwoSyllableCue('s');
     } else if (m === 'sleeping') {
         playSquareBlip(330, 140, 0.045);
     } else {
         playSquareBlip(440, 80, 0.05);
     }
+}
+
+/**
+ * 任务完成（成功庆祝）：双音节「短促 + 休止 + 高八度长音」，与琶音类 mood / Toast 单音拉开辨识度。
+ * tier：xs/s/m/l 用不同八度根音 + 第二音略加长；xs 更短更亮表示「秒过」。
+ */
+function playTaskSuccessTwoSyllableCue(tier) {
+    if (!isNixieSoundOn()) return;
+    resumeNixieAudioIfNeeded();
+    var ctx = getNixieAudioContext();
+    if (!ctx) return;
+    var t = tier || 's';
+    var f1;
+    var f2;
+    var gapMs;
+    var dur1;
+    var dur2;
+    var peak;
+    if (t === 'l') {
+        f1 = 523;
+        f2 = 1046;
+        gapMs = 88;
+        dur1 = 52;
+        dur2 = 280;
+        peak = 0.063;
+    } else if (t === 'm') {
+        f1 = 587;
+        f2 = 1175;
+        gapMs = 84;
+        dur1 = 50;
+        dur2 = 235;
+        peak = 0.058;
+    } else if (t === 'xs') {
+        f1 = 784;
+        f2 = 1568;
+        gapMs = 68;
+        dur1 = 36;
+        dur2 = 148;
+        peak = 0.047;
+    } else {
+        f1 = 659;
+        f2 = 1318;
+        gapMs = 80;
+        dur1 = 46;
+        dur2 = 205;
+        peak = 0.054;
+    }
+    var t0 = ctx.currentTime;
+    playSquareBlip(f1, dur1, peak, t0);
+    playSquareBlip(f2, dur2, peak * 0.96, t0 + dur1 / 1000 + gapMs / 1000);
 }
 
 function playCelebrationCue(tier, isError) {
@@ -385,13 +550,7 @@ function playCelebrationCue(tier, isError) {
             playSquareSequence([196, 185], 90, 0.08);
         }
     } else {
-        if (t === 'l') {
-            playSquareSequence([523, 659, 784, 1046, 1318], 48, 0.065);
-        } else if (t === 'm') {
-            playSquareSequence([523, 659, 784, 988], 52, 0.06);
-        } else {
-            playSquareSequence([659, 784, 1046], 58, 0.055);
-        }
+        playTaskSuccessTwoSyllableCue(t);
     }
 }
 
@@ -405,6 +564,20 @@ function playFeedCue() {
     if (!isNixieSoundOn()) return;
     resumeNixieAudioIfNeeded();
     playSquareSequence([659, 784, 988], 65, 0.07);
+}
+
+/** 启动跑入 `#pet.pet-enter-run`：四音上扬（不依赖 soundGate，与入场同帧） */
+function playPetEnterCue() {
+    if (!isNixieSoundOn()) return;
+    resumeNixieAudioIfNeeded();
+    playSquareSequence([523, 659, 784, 1046], 56, 0.052);
+}
+
+/** 安全退出 `#pet.pet-exit-flee`：四音下行告别 */
+function playPetExitCue() {
+    if (!isNixieSoundOn()) return;
+    resumeNixieAudioIfNeeded();
+    playSquareSequence([880, 659, 523, 392], 58, 0.048);
 }
 
 /** 逗小猪：轻反馈；comfort 用于 Error 等负向 mood */
@@ -444,7 +617,7 @@ function clearPokeMainTimer() {
 
 /**
  * 清逗猪定时器 + 与 Toast/哒哒哒 共用的 bubbleHideTimer，并收起气泡。
- * 「哒哒哒」来自 Overlay UserTypingToast（native 打字脉冲），不是 idle 台词；
+ * 「哒哒哒」来自 Overlay UserTypingPulse（native 打字脉冲，台词约 5%），不是 idle 台词；
  * 逗猪若清掉 toast 的 hide 定时器却不恢复，会把旧主行（含哒哒哒）锁在屏上。
  */
 function clearPokeBubbleTimers() {
@@ -668,12 +841,14 @@ var NixieIdlePlay = (function() {
         var minute = d.getMinutes();
         var dow = d.getDay();
         var isWeekend = dow === 0 || dow === 6;
+        var wph = pet.getAttribute('data-walk-phase') || 'off';
         return {
             mood: mood,
             isIdle: mood === 'idle',
             isSleeping: mood === 'sleeping',
             soundOn: typeof isNixieSoundOn === 'function' && isNixieSoundOn(),
-            walkFollowing: pet.getAttribute('data-walk-phase') === 'following',
+            walkFollowing: wph === 'following',
+            walkHoverIntent: wph === 'hover_intent',
             pomoRunning: pet.getAttribute('data-pomo-running') === '1',
             celebration: !!pet.getAttribute('data-celebration-tier'),
             pageHidden: document.hidden,
@@ -734,7 +909,7 @@ var NixieIdlePlay = (function() {
     function canSchedule(ctx) {
         if (!ctx) return false;
         if (ctx.pageHidden) return false;
-        if (ctx.walkFollowing || ctx.pomoRunning || ctx.celebration) return false;
+        if (ctx.walkFollowing || ctx.walkHoverIntent || ctx.pomoRunning || ctx.celebration) return false;
         if (!ctx.isIdle && !ctx.isSleeping) return false;
         return true;
     }
@@ -876,7 +1051,10 @@ var NixieIdlePlay = (function() {
                 '左瞧瞧，右瞧瞧～',
                 '（探头）应该没人发现我吧？'
             ],
-            onStart: function() {}
+            onStart: function(ctx) {
+                if (!ctx.soundOn) return;
+                playIdlePlayCue('peek');
+            }
         });
         register({
             id: 'spin',
@@ -889,7 +1067,10 @@ var NixieIdlePlay = (function() {
                 '头晕晕～但是好快乐～',
                 '我是小旋风猪猪～'
             ],
-            onStart: function() {}
+            onStart: function(ctx) {
+                if (!ctx.soundOn) return;
+                playIdlePlayCue('spin');
+            }
         });
         register({
             id: 'nod',
@@ -902,7 +1083,10 @@ var NixieIdlePlay = (function() {
                 '嗯嗯……梦到罐罐了……',
                 '脑袋好重……就点一下下～'
             ],
-            onStart: function() {}
+            onStart: function(ctx) {
+                if (!ctx.soundOn) return;
+                playIdlePlayCue('nod');
+            }
         });
         register({
             id: 'hum',
@@ -918,8 +1102,7 @@ var NixieIdlePlay = (function() {
             ],
             onStart: function(ctx) {
                 if (!ctx.soundOn) return;
-                if (resumeNixieAudioIfNeeded) resumeNixieAudioIfNeeded();
-                playIdleHumHumCue();
+                playIdlePlayCue('hum');
             }
         });
         /* 时间向：各约 90min 窄窗 [start,end)；动效见 nyanpig.css idle-play-{morning,evening,weekend,late} */
@@ -939,7 +1122,10 @@ var NixieIdlePlay = (function() {
                 '阳光刚好，适合伸个懒腰～',
                 '唔……再伸一下就去干活～'
             ],
-            onStart: function() {}
+            onStart: function(ctx) {
+                if (!ctx.soundOn) return;
+                playIdlePlayCue('morning');
+            }
         });
         register({
             id: 'evening',
@@ -956,7 +1142,10 @@ var NixieIdlePlay = (function() {
                 '窗外颜色变温柔了～',
                 '收工前的最后一抹亮～'
             ],
-            onStart: function() {}
+            onStart: function(ctx) {
+                if (!ctx.soundOn) return;
+                playIdlePlayCue('evening');
+            }
         });
         register({
             id: 'weekend',
@@ -974,7 +1163,10 @@ var NixieIdlePlay = (function() {
                 '不 rush，先伸个懒腰～',
                 '早午餐之间的发呆时间～'
             ],
-            onStart: function() {}
+            onStart: function(ctx) {
+                if (!ctx.soundOn) return;
+                playIdlePlayCue('weekend');
+            }
         });
         register({
             id: 'late',
@@ -991,7 +1183,10 @@ var NixieIdlePlay = (function() {
                 '星星值班中～',
                 '月亮不睡我不睡～（小声）'
             ],
-            onStart: function() {}
+            onStart: function(ctx) {
+                if (!ctx.soundOn) return;
+                playIdlePlayCue('late');
+            }
         });
         document.addEventListener('visibilitychange', function() {
             if (document.hidden) cancel('hidden');
@@ -1045,7 +1240,11 @@ function updateMood(mood, label, hasExt, quote, focusFile, subtitle, skipSound) 
     }
     if (typeof NixieIdlePlay !== 'undefined') NixieIdlePlay.cancel('mood');
     clearPokeBubbleTimers();
-    document.getElementById('pet').className = 'mood-' + mood;
+    var pet = document.getElementById('pet');
+    pet.className = 'mood-' + mood;
+    if (mood !== 'success') {
+        pet.removeAttribute('data-success-trivial');
+    }
     document.getElementById('mood-text').textContent = quote !== undefined ? quote : label;
     if (focusFile !== undefined) {
         setFocusFileHint(focusFile);
@@ -1098,6 +1297,26 @@ function showToast(msg, skipToastSound) {
     }, 2500);
     if (!skipToastSound && soundGateReady && isNixieSoundOn()) playToastCue();
 }
+/** 打字脉冲：feedback 为真时跳跃 + Toast 音效（每 3 次脉冲一次）；showLine 为真时展示「哒哒哒」气泡（约 5%）。 */
+function showUserTypingPulse(showLine, feedback) {
+    var pet = document.getElementById('pet');
+    var bubble = document.getElementById('bubble');
+    if (showLine) {
+        clearPokeBubbleTimers();
+        document.getElementById('mood-text').textContent = nixieT('toast.user_typing');
+        if (bubbleHideTimer) clearTimeout(bubbleHideTimer);
+        bubble.classList.add('bubble-visible');
+        bubbleHideTimer = setTimeout(function() {
+            bubble.classList.remove('bubble-visible');
+            bubbleHideTimer = null;
+        }, 2500);
+    }
+    if (feedback) {
+        pet.classList.add('pet-jump');
+        setTimeout(function() { pet.classList.remove('pet-jump'); }, 320);
+        if (soundGateReady && isNixieSoundOn()) playToastCue();
+    }
+}
 /** 同一次脚本里先切 mood 再挂庆祝，避免 WKWebView 在两段 evaluate 之间绘制一帧「仍是 writing 皮 + 庆祝层」 */
 function updateMoodThenApplyCelebration(mood, label, hasExt, quote, focusFile, subtitle, tier, durationMs, isError) {
     if (nixieBootEntranceActive) {
@@ -1122,22 +1341,38 @@ function updateMoodThenApplyCelebration(mood, label, hasExt, quote, focusFile, s
 function applyCelebrationTier(tier, durationMs, isError) {
     if (typeof NixieIdlePlay !== 'undefined') NixieIdlePlay.cancel('celebration');
     var pet = document.getElementById('pet');
+    if (celebrationPauseTimer) {
+        clearTimeout(celebrationPauseTimer);
+        celebrationPauseTimer = null;
+    }
     celebrationMotionEpoch++;
     var motionEpoch = celebrationMotionEpoch;
     pet.removeAttribute('data-celebration-pause-motion');
     pet.setAttribute('data-celebration-tier', tier || '');
     pet.setAttribute('data-celebration-ms', String(durationMs || 0));
     pet.setAttribute('data-celebration-err', isError ? '1' : '0');
-    requestAnimationFrame(function() {
-        requestAnimationFrame(function() {
-            if (motionEpoch !== celebrationMotionEpoch) return;
-            if (!pet.getAttribute('data-celebration-tier')) return;
-            pet.setAttribute('data-celebration-pause-motion', '1');
-        });
-    });
+    if (!isError && tier === 'xs') {
+        pet.setAttribute('data-success-trivial', '1');
+    } else {
+        pet.removeAttribute('data-success-trivial');
+    }
+    celebrationPauseTimer = setTimeout(function() {
+        celebrationPauseTimer = null;
+        if (motionEpoch !== celebrationMotionEpoch) return;
+        if (!pet.getAttribute('data-celebration-tier')) return;
+        if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+            return;
+        }
+        pet.setAttribute('data-celebration-pause-motion', '1');
+        wireCelebrationPauseRelease(pet, motionEpoch);
+    }, CELEBRATION_PAUSE_MS);
     if (celebrationClearTimer) clearTimeout(celebrationClearTimer);
     celebrationClearTimer = setTimeout(function() {
         celebrationMotionEpoch++;
+        if (celebrationPauseTimer) {
+            clearTimeout(celebrationPauseTimer);
+            celebrationPauseTimer = null;
+        }
         pet.removeAttribute('data-celebration-tier');
         pet.removeAttribute('data-celebration-ms');
         pet.removeAttribute('data-celebration-err');
@@ -1150,12 +1385,159 @@ function setFeedAvailable(can) {
     var pet = document.getElementById('pet');
     pet.setAttribute('data-can-feed', can ? '1' : '0');
 }
-function setWalkPhase(phase) {
+function syncWalkMenuLabel() {
+    var btn = document.getElementById('menu-walk-toggle');
+    if (!btn) return;
+    if (window.__nixieWalkSupported !== true) {
+        btn.textContent = nixieT('menu.walk_unsupported');
+        btn.disabled = true;
+        return;
+    }
+    btn.disabled = false;
     var pet = document.getElementById('pet');
+    var phase = pet ? pet.getAttribute('data-walk-phase') || 'off' : 'off';
+    var on = phase !== 'off';
+    btn.textContent = on ? nixieT('menu.walk_on') : nixieT('menu.walk_off');
+}
+
+function playWalkStartCue() {
+    if (!isNixieSoundOn()) return;
+    resumeNixieAudioIfNeeded();
+    playSquareSequence([523, 659, 784], 88, 0.065);
+}
+
+function playWalkEndCue() {
+    if (!isNixieSoundOn()) return;
+    resumeNixieAudioIfNeeded();
+    playSquareSequence([784, 659, 523], 85, 0.058);
+}
+
+function walkFeedbackFromPhaseChange(prev, next) {
+    if (prev !== 'following' && next === 'following') {
+        if (soundGateReady && isNixieSoundOn()) playWalkStartCue();
+        var line = typeof nixiePickLine === 'function' ? nixiePickLine('walk.start') : '';
+        if (line) showPokeLineSmart(line, 2400);
+        return;
+    }
+    if (prev === 'following' && next !== 'following') {
+        if (soundGateReady && isNixieSoundOn()) playWalkEndCue();
+        var lineEnd = typeof nixiePickLine === 'function' ? nixiePickLine('walk.end') : '';
+        if (lineEnd) showPokeLineSmart(lineEnd, 2200);
+    }
+}
+
+/** 遛猪 UI 阶段（Rust 仅 off/idle/following；hover_intent 仅前端蓄力） */
+function applyWalkPhaseAttr(phase) {
+    var pet = document.getElementById('pet');
+    if (!pet) return;
+    var prevWalk = pet.getAttribute('data-walk-phase') || 'off';
+    if (phase !== 'hover_intent') walkClearHoverTimer();
+    if (prevWalk === 'following' && phase !== 'following') {
+        lastWalkChasePosted = null;
+        try {
+            window.ipc.postMessage('walk_chase_0');
+        } catch (e) {}
+    }
+    if (phase === 'following') {
+        lastWalkChasePosted = null;
+    }
     pet.setAttribute('data-walk-phase', phase || 'off');
     if (typeof NixieIdlePlay !== 'undefined') {
         if (phase === 'following') NixieIdlePlay.cancel('walk');
+        else if (phase === 'hover_intent') NixieIdlePlay.cancel('walk');
         else NixieIdlePlay.scheduleArm();
+    }
+    syncWalkMenuLabel();
+}
+function setWalkPhase(phase) {
+    var pet = document.getElementById('pet');
+    var prev = pet ? pet.getAttribute('data-walk-phase') || 'off' : 'off';
+    var next = phase || 'off';
+    walkFeedbackFromPhaseChange(prev, next);
+    applyWalkPhaseAttr(next);
+}
+
+var WALK_HOVER_MS = 7000;
+
+var walkHoverTimer = null;
+
+function walkClearHoverTimer() {
+    if (walkHoverTimer) {
+        clearTimeout(walkHoverTimer);
+        walkHoverTimer = null;
+    }
+}
+
+function walkOnMenuOpenResetHover() {
+    var pet = document.getElementById('pet');
+    if (!pet) return;
+    if (pet.getAttribute('data-walk-phase') === 'hover_intent') {
+        applyWalkPhaseAttr('idle');
+    }
+}
+
+function walkOnPetEnter() {
+    if (window.__nixieWalkSupported !== true) return;
+    var pet = document.getElementById('pet');
+    if (!pet) return;
+    if (pet.getAttribute('data-walk-phase') !== 'idle') return;
+    walkClearHoverTimer();
+    applyWalkPhaseAttr('hover_intent');
+    walkHoverTimer = setTimeout(function() {
+        walkHoverTimer = null;
+        var p = document.getElementById('pet');
+        if (!p || p.getAttribute('data-walk-phase') !== 'hover_intent') return;
+        if (!window.__nixieWalkSupported) {
+            showToast(nixieT('toast.walk_unsupported'));
+            applyWalkPhaseAttr('idle');
+            return;
+        }
+        try {
+            window.ipc.postMessage('walk_start');
+        } catch (e) {}
+    }, WALK_HOVER_MS);
+}
+
+function walkOnPetLeave() {
+    var pet = document.getElementById('pet');
+    if (!pet) return;
+    if (pet.getAttribute('data-walk-phase') === 'hover_intent') {
+        walkClearHoverTimer();
+        applyWalkPhaseAttr('idle');
+    }
+}
+
+function walkOnGlobalPointerDown(e) {
+    if (e.button !== 0) return;
+    var pet = document.getElementById('pet');
+    if (!pet) return;
+    var phase = pet.getAttribute('data-walk-phase') || 'off';
+    if (phase === 'off') return;
+    if (phase === 'hover_intent') {
+        walkClearHoverTimer();
+        applyWalkPhaseAttr('idle');
+        return;
+    }
+    if (phase === 'following') {
+        try {
+            window.ipc.postMessage('walk_stop');
+        } catch (err) {}
+    }
+}
+
+function walkOnEscape() {
+    var pet = document.getElementById('pet');
+    if (!pet) return;
+    var phase = pet.getAttribute('data-walk-phase') || 'off';
+    if (phase === 'hover_intent') {
+        walkClearHoverTimer();
+        applyWalkPhaseAttr('idle');
+        return;
+    }
+    if (phase === 'following') {
+        try {
+            window.ipc.postMessage('walk_stop');
+        } catch (err) {}
     }
 }
 
@@ -1281,11 +1663,22 @@ function flushNixieEntranceDeferred() {
 function beginSafeQuit() {
     if (nixieQuitStarted) return;
     nixieQuitStarted = true;
+    walkClearHoverTimer();
+    var pet0 = document.getElementById('pet');
+    if (pet0 && pet0.getAttribute('data-walk-phase') === 'following') {
+        try {
+            window.ipc.postMessage('walk_stop');
+        } catch (e) {}
+    }
     if (typeof stopPomodoro === 'function') stopPomodoro();
     if (typeof NixieIdlePlay !== 'undefined') NixieIdlePlay.cancel('mood');
     if (celebrationClearTimer) {
         clearTimeout(celebrationClearTimer);
         celebrationClearTimer = null;
+    }
+    if (celebrationPauseTimer) {
+        clearTimeout(celebrationPauseTimer);
+        celebrationPauseTimer = null;
     }
     var pet = document.getElementById('pet');
     if (!pet) {
@@ -1296,6 +1689,7 @@ function beginSafeQuit() {
     pet.removeAttribute('data-celebration-ms');
     pet.removeAttribute('data-celebration-err');
     pet.removeAttribute('data-celebration-pause-motion');
+    pet.removeAttribute('data-success-trivial');
     pet.classList.remove('pet-jump', 'pet-poke', 'pet-poke-comfort');
     clearPokeAsideTimer();
     clearPokeMainTimer();
@@ -1313,6 +1707,7 @@ function beginSafeQuit() {
     if (bubble) bubble.classList.add('bubble-visible');
     void pet.offsetWidth;
     pet.classList.add('pet-exit-flee');
+    playPetExitCue();
     setTimeout(function() {
         if (window.ipc) window.ipc.postMessage('quit');
     }, NIXIE_EXIT_ANIM_MS + 80);
@@ -1345,14 +1740,17 @@ function closeAboutSheet() {
 }
 
 function openPixelMenu(clientX, clientY) {
+    walkClearHoverTimer();
+    walkOnMenuOpenResetHover();
     var m = document.getElementById('context-menu');
     refreshMenuFeedState();
     syncMenuStaticLabels();
     syncPomoMenuLabel();
     syncSoundMenuLabel();
+    syncWalkMenuLabel();
     m.hidden = false;
     m.style.left = Math.min(clientX, window.innerWidth - 124) + 'px';
-    m.style.top = Math.min(clientY, window.innerHeight - 228) + 'px';
+    m.style.top = Math.min(clientY, window.innerHeight - 252) + 'px';
     syncPointerPassThroughForPixelMenu(true);
 }
 
@@ -1383,6 +1781,7 @@ function onFeedResult(ok) {
 
 document.addEventListener('DOMContentLoaded', function() {
     syncMenuStaticLabels();
+    syncWalkMenuLabel();
     if (typeof NixieIdlePlay !== 'undefined') NixieIdlePlay.init();
     petVisualEl = document.querySelector('#pet .pet-visual');
     petLookShiftEl = document.querySelector('#pet .pet-look-shift');
@@ -1401,6 +1800,7 @@ document.addEventListener('DOMContentLoaded', function() {
         nixieEntranceDeferred = null;
         var pet = document.getElementById('pet');
         pet.className = 'mood-idle pet-enter-run';
+        playPetEnterCue();
         var mt = document.getElementById('mood-text');
         if (mt) mt.textContent = nixieT('boot.here');
         setBubbleSubtitle('');
@@ -1443,6 +1843,9 @@ document.addEventListener('DOMContentLoaded', function() {
             onPet: petEl.contains(e.target)
         };
     });
+    document.addEventListener('mousedown', walkOnGlobalPointerDown, true);
+    petEl.addEventListener('mouseenter', walkOnPetEnter);
+    petEl.addEventListener('mouseleave', walkOnPetLeave);
     document.addEventListener('mousemove', onPetPokePointerMove);
     document.addEventListener('mouseup', onPetPokePointerUp);
     window.addEventListener('blur', function() {
@@ -1471,6 +1874,12 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('menu-sound-toggle').addEventListener('mousedown', function(e) {
         menuItemActivate(e, function() {
             window.ipc.postMessage('sound_toggle');
+        });
+    });
+    document.getElementById('menu-walk-toggle').addEventListener('mousedown', function(e) {
+        menuItemActivate(e, function() {
+            if (!window.__nixieWalkSupported) return;
+            window.ipc.postMessage('walk_toggle');
         });
     });
     document.getElementById('menu-feed').addEventListener('mousedown', function(e) {
@@ -1511,10 +1920,19 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
     document.addEventListener('keydown', function(e) {
-        if (e.key !== 'Escape') return;
-        var sh = document.getElementById('about-sheet');
-        if (!sh || sh.hidden) return;
-        closeAboutSheet();
+        if (e.key === 'Escape') {
+            var cm = document.getElementById('context-menu');
+            if (cm && !cm.hidden) {
+                closePixelMenu();
+                return;
+            }
+            var sh = document.getElementById('about-sheet');
+            if (sh && !sh.hidden) {
+                closeAboutSheet();
+                return;
+            }
+            walkOnEscape();
+        }
     });
     var aboutCloseBtn = document.getElementById('about-close');
     if (aboutCloseBtn) {
