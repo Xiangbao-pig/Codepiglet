@@ -12,6 +12,7 @@ mod pet_core;
 mod pet_overlay;
 mod quotes;
 mod window_prefs;
+mod pet_settings;
 
 use std::borrow::Cow;
 use std::cell::RefCell;
@@ -149,6 +150,8 @@ enum UserEvent {
     WalkResetCursor,
     /// 前端：转身完成且朝向已对准后才允许跟窗移动
     WalkChaseSet { allow: bool },
+    /// `pet_settings.json` 保存成功后把合并结果推回 WebView
+    PetSettingsApplied { json_parse_arg: String },
 }
 
 fn persist_window_outer_position(window: &tao::window::Window) {
@@ -199,6 +202,7 @@ fn main() {
     let menu_open_proxy = event_loop.create_proxy();
     let quit_proxy = event_loop.create_proxy();
     let state_proxy_ipc = state_proxy.clone();
+    let pet_settings_ipc = event_loop.create_proxy();
 
     let overlay_shared: Arc<Mutex<PetOverlay>> = Arc::new(Mutex::new(PetOverlay::new()));
     let overlay_for_ipc = Arc::clone(&overlay_shared);
@@ -225,7 +229,19 @@ fn main() {
         })
         .with_html(nyanpig::HTML)
         .with_ipc_handler(move |msg: wry::http::Request<String>| {
-            match msg.body().as_str() {
+            let body = msg.body();
+            if let Some(rest) = body.strip_prefix("PET_SETTINGS_SAVE\n") {
+                if let Ok(s) = pet_settings::save_from_form_json(rest.trim()) {
+                    let inner = pet_settings::to_web_object_json(&s);
+                    if let Ok(wrapped) = serde_json::to_string(&inner) {
+                        let _ = pet_settings_ipc.send_event(UserEvent::PetSettingsApplied {
+                            json_parse_arg: wrapped,
+                        });
+                    }
+                }
+                return;
+            }
+            match body.as_str() {
                 "walk_toggle" => {
                     let phase = overlay_for_ipc
                         .lock()
@@ -301,6 +317,10 @@ fn main() {
     )
     .unwrap_or_else(|_| "\"\"".to_string());
     let ver_js = serde_json::to_string(env!("CARGO_PKG_VERSION")).unwrap_or_else(|_| "\"\"".to_string());
+    let boot_ps = pet_settings::load_pet_settings();
+    let ps_inner = pet_settings::to_web_object_json(&boot_ps);
+    let ps_parse_arg = serde_json::to_string(&ps_inner).unwrap_or_else(|_| "\"{}\"".to_string());
+    let loc_js = serde_json::to_string(boot_ps.effective_locale()).unwrap_or_else(|_| "\"zh\"".to_string());
     let boot_walk_phase = overlay_shared
         .lock()
         .map(|o| o.walk_phase())
@@ -311,7 +331,7 @@ fn main() {
         "false"
     };
     let _ = webview.evaluate_script(&format!(
-        "window.__nixieMeta={{version:{ver_js},configDir:{dir_js}}};window.__nixieSoundEnabled={0};window.__nixieWalkSupported={1};if(typeof setSoundEnabledFromRust==='function')setSoundEnabledFromRust({0},false);if(typeof setWalkPhase==='function')setWalkPhase('{2}');",
+        "window.__nixieLocale={loc_js};try{{window.__nixiePetSettings=JSON.parse({ps_parse_arg});}}catch(_e){{window.__nixiePetSettings={{}};}}window.__nixieMeta={{version:{ver_js},configDir:{dir_js}}};window.__nixieSoundEnabled={0};window.__nixieWalkSupported={1};if(typeof setSoundEnabledFromRust==='function')setSoundEnabledFromRust({0},false);if(typeof setWalkPhase==='function')setWalkPhase('{2}');if(typeof applyPetSettingsFromRust==='function')applyPetSettingsFromRust();",
         boot_sound_enabled,
         walk_sup,
         walk_phase_js(boot_walk_phase)
@@ -546,6 +566,11 @@ fn main() {
                 pet_pointer_state
                     .borrow_mut()
                     .set_chase_move_allowed(allow);
+            }
+            Event::UserEvent(UserEvent::PetSettingsApplied { json_parse_arg }) => {
+                let _ = webview.evaluate_script(&format!(
+                    "try{{Object.assign(window.__nixiePetSettings||{{}},JSON.parse({json_parse_arg}));if(typeof applyPetSettingsFromRust==='function')applyPetSettingsFromRust();}}catch(_e){{}}"
+                ));
             }
             Event::UserEvent(UserEvent::QuitPet) => {
                 persist_window_outer_position(&window);

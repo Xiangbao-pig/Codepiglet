@@ -336,16 +336,172 @@ function syncSoundMenuLabel() {
 function syncMenuStaticLabels() {
     var feed = document.getElementById('menu-feed');
     var folder = document.getElementById('menu-open-folder');
+    var petSettings = document.getElementById('menu-pet-settings');
     var about = document.getElementById('menu-about');
     var quit = document.getElementById('menu-quit');
     var aboutTitle = document.getElementById('about-title');
     var aboutClose = document.getElementById('about-close');
     if (feed) feed.textContent = nixieT('menu.feed');
     if (folder) folder.textContent = nixieT('menu.open_folder');
+    if (petSettings) petSettings.textContent = nixieT('menu.pet_settings');
     if (about) about.textContent = nixieT('menu.about');
     if (quit) quit.textContent = nixieT('menu.quit');
     if (aboutTitle) aboutTitle.textContent = nixieT('about.title');
     if (aboutClose) aboutClose.textContent = nixieT('about.close');
+    syncPetSettingsModalLabels();
+}
+
+function getNixiePetSettings() {
+    var s = window.__nixiePetSettings;
+    if (!s || typeof s !== 'object') return {};
+    return s;
+}
+
+/** Rust 注入或保存成功后调用：体型缩放 + 界面语言 */
+function applyPetSettingsFromRust() {
+    var s = getNixiePetSettings();
+    var scale = typeof s.bodyScale === 'number' ? s.bodyScale : 1;
+    if (scale !== scale || scale <= 0) scale = 1;
+    var pet = document.getElementById('pet');
+    if (pet) pet.style.setProperty('--pet-body-scale', String(scale));
+    var eff = s.effectiveLocale;
+    if (eff === 'en' || eff === 'ja' || eff === 'zh') window.__nixieLocale = eff;
+    syncMenuStaticLabels();
+    syncSoundMenuLabel();
+    syncPomoMenuLabel();
+    syncWalkMenuLabel();
+}
+
+function defaultPetSettingsForm() {
+    return { name: 'OINKER_01', bodySize: 'normal', locale: 'zh', breed: 'virtual_pig' };
+}
+
+function formValuesFromPetSettings(s) {
+    var d = defaultPetSettingsForm();
+    if (!s || typeof s !== 'object') return d;
+    var bs = s.bodySize;
+    if (bs !== 'small' && bs !== 'mini') bs = 'normal';
+    var loc = s.locale;
+    if (loc !== 'en' && loc !== 'ja' && loc !== 'binary' && loc !== 'zh') loc = d.locale;
+    var name = typeof s.name === 'string' ? s.name.trim().slice(0, 64) : d.name;
+    if (!name.length) name = d.name;
+    var breed = typeof s.breed === 'string' && s.breed.length ? s.breed.slice(0, 48) : d.breed;
+    return { name: name, bodySize: bs, locale: loc, breed: breed };
+}
+
+function rebuildPetSettingsSelectOptions(extraBreed) {
+    var bodySel = document.getElementById('pet-settings-body');
+    var locSel = document.getElementById('pet-settings-locale');
+    var breedSel = document.getElementById('pet-settings-breed');
+    if (!bodySel || !locSel || !breedSel) return;
+    function fill(sel, rows) {
+        sel.innerHTML = '';
+        for (var i = 0; i < rows.length; i++) {
+            var o = document.createElement('option');
+            o.value = rows[i][0];
+            o.textContent = rows[i][1];
+            sel.appendChild(o);
+        }
+    }
+    fill(bodySel, [
+        ['normal', nixieT('pet.settings.body.normal')],
+        ['small', nixieT('pet.settings.body.small')],
+        ['mini', nixieT('pet.settings.body.mini')]
+    ]);
+    fill(locSel, [
+        ['zh', nixieT('pet.settings.locale.zh')],
+        ['en', nixieT('pet.settings.locale.en')],
+        ['ja', nixieT('pet.settings.locale.ja')],
+        ['binary', nixieT('pet.settings.locale.binary')]
+    ]);
+    var breedRows = [['virtual_pig', nixieT('pet.settings.breed.virtual_pig')]];
+    if (extraBreed && extraBreed !== 'virtual_pig') breedRows.push([extraBreed, extraBreed]);
+    fill(breedSel, breedRows);
+}
+
+function syncPetSettingsModalLabels() {
+    var title = document.getElementById('pet-settings-title');
+    if (title) title.textContent = nixieT('pet.settings.title');
+    var nl = document.getElementById('pet-settings-name-label');
+    if (nl) nl.textContent = nixieT('pet.settings.name_label');
+    var bl = document.getElementById('pet-settings-body-label');
+    if (bl) bl.textContent = nixieT('pet.settings.body_label');
+    var ll = document.getElementById('pet-settings-locale-label');
+    if (ll) ll.textContent = nixieT('pet.settings.locale_label');
+    var brl = document.getElementById('pet-settings-breed-label');
+    if (brl) brl.textContent = nixieT('pet.settings.breed_label');
+    var st = document.getElementById('pet-settings-save-txt');
+    if (st) st.textContent = nixieT('pet.settings.save');
+    var ct = document.getElementById('pet-settings-cancel-txt');
+    if (ct) ct.textContent = nixieT('pet.settings.cancel');
+    var rt = document.getElementById('pet-settings-reset-txt');
+    if (rt) rt.textContent = nixieT('pet.settings.reset');
+    var tagLvl = document.querySelector('.pet-settings-tag-lvl');
+    if (tagLvl) tagLvl.textContent = nixieT('pet.settings.tag_lvl');
+    var tagMood = document.querySelector('.pet-settings-tag-mood');
+    if (tagMood) tagMood.textContent = nixieT('pet.settings.tag_mood');
+    var helpBtn = document.getElementById('pet-settings-help');
+    if (helpBtn) helpBtn.setAttribute('title', nixieT('pet.settings.help_toast'));
+    var gearBtn = document.getElementById('pet-settings-gear');
+    if (gearBtn) gearBtn.setAttribute('title', nixieT('menu.open_folder'));
+}
+
+function readPetSettingsForm() {
+    var nameEl = document.getElementById('pet-settings-name');
+    var bodyEl = document.getElementById('pet-settings-body');
+    var locEl = document.getElementById('pet-settings-locale');
+    var breedEl = document.getElementById('pet-settings-breed');
+    var rawName = nameEl ? (nameEl.value || '').trim().slice(0, 64) : '';
+    return {
+        name: rawName,
+        bodySize: bodyEl && bodyEl.value ? bodyEl.value : 'normal',
+        locale: locEl && locEl.value ? locEl.value : 'zh',
+        breed: breedEl && breedEl.value ? breedEl.value : 'virtual_pig'
+    };
+}
+
+function writePetSettingsForm(v) {
+    var nameEl = document.getElementById('pet-settings-name');
+    var bodyEl = document.getElementById('pet-settings-body');
+    var locEl = document.getElementById('pet-settings-locale');
+    var breedEl = document.getElementById('pet-settings-breed');
+    if (nameEl) nameEl.value = v.name;
+    if (bodyEl) bodyEl.value = v.bodySize;
+    if (locEl) locEl.value = v.locale;
+    if (breedEl) breedEl.value = v.breed;
+}
+
+function openPetSettingsModal() {
+    var aboutSh = document.getElementById('about-sheet');
+    if (aboutSh && !aboutSh.hidden) closeAboutSheet();
+    var modal = document.getElementById('pet-settings-modal');
+    if (!modal) return;
+    var cur = formValuesFromPetSettings(getNixiePetSettings());
+    rebuildPetSettingsSelectOptions(cur.breed);
+    syncPetSettingsModalLabels();
+    writePetSettingsForm(cur);
+    modal.hidden = false;
+    syncPointerPassThroughForPixelMenu(true);
+}
+
+function closePetSettingsModal() {
+    var modal = document.getElementById('pet-settings-modal');
+    if (modal) modal.hidden = true;
+    syncPointerPassThroughForPixelMenu(false);
+}
+
+function savePetSettingsModal() {
+    var v = readPetSettingsForm();
+    var payload = JSON.stringify({
+        name: v.name,
+        bodySize: v.bodySize,
+        locale: v.locale,
+        breed: v.breed
+    });
+    try {
+        if (window.ipc) window.ipc.postMessage('PET_SETTINGS_SAVE\n' + payload);
+    } catch (e) {}
+    closePetSettingsModal();
 }
 
 /** 方波 + 短包络，偏 8bit / CodePiggy 式 Web 合成 */
@@ -1719,6 +1875,8 @@ function closePixelMenu() {
 }
 
 function openAboutSheet() {
+    var psModal = document.getElementById('pet-settings-modal');
+    if (psModal && !psModal.hidden) closePetSettingsModal();
     var sheet = document.getElementById('about-sheet');
     if (!sheet) return;
     var meta = window.__nixieMeta || {};
@@ -1750,7 +1908,7 @@ function openPixelMenu(clientX, clientY) {
     syncWalkMenuLabel();
     m.hidden = false;
     m.style.left = Math.min(clientX, window.innerWidth - 124) + 'px';
-    m.style.top = Math.min(clientY, window.innerHeight - 252) + 'px';
+    m.style.top = Math.min(clientY, window.innerHeight - 280) + 'px';
     syncPointerPassThroughForPixelMenu(true);
 }
 
@@ -1780,8 +1938,7 @@ function onFeedResult(ok) {
 }
 
 document.addEventListener('DOMContentLoaded', function() {
-    syncMenuStaticLabels();
-    syncWalkMenuLabel();
+    applyPetSettingsFromRust();
     if (typeof NixieIdlePlay !== 'undefined') NixieIdlePlay.init();
     petVisualEl = document.querySelector('#pet .pet-visual');
     petLookShiftEl = document.querySelector('#pet .pet-look-shift');
@@ -1893,6 +2050,11 @@ document.addEventListener('DOMContentLoaded', function() {
             if (window.ipc) window.ipc.postMessage('open_config_dir');
         });
     });
+    document.getElementById('menu-pet-settings').addEventListener('mousedown', function(e) {
+        menuItemActivate(e, function() {
+            openPetSettingsModal();
+        });
+    });
     document.getElementById('menu-about').addEventListener('mousedown', function(e) {
         menuItemActivate(e, function() {
             openAboutSheet();
@@ -1910,6 +2072,62 @@ document.addEventListener('DOMContentLoaded', function() {
         if (menu.contains(e.target)) return;
         closePixelMenu();
     }, true);
+    var petSettingsModal = document.getElementById('pet-settings-modal');
+    if (petSettingsModal) {
+        petSettingsModal.addEventListener('mousedown', function(e) {
+            if (e.button !== 0) return;
+            if (petSettingsModal.hidden) return;
+            if (e.target === petSettingsModal) closePetSettingsModal();
+        });
+    }
+    var petSave = document.getElementById('pet-settings-save');
+    if (petSave) {
+        petSave.addEventListener('mousedown', function(e) {
+            if (e.button !== 0) return;
+            e.preventDefault();
+            e.stopPropagation();
+            savePetSettingsModal();
+        });
+    }
+    var petCancel = document.getElementById('pet-settings-cancel');
+    if (petCancel) {
+        petCancel.addEventListener('mousedown', function(e) {
+            if (e.button !== 0) return;
+            e.preventDefault();
+            e.stopPropagation();
+            closePetSettingsModal();
+        });
+    }
+    var petReset = document.getElementById('pet-settings-reset');
+    if (petReset) {
+        petReset.addEventListener('mousedown', function(e) {
+            if (e.button !== 0) return;
+            e.preventDefault();
+            e.stopPropagation();
+            var d = defaultPetSettingsForm();
+            rebuildPetSettingsSelectOptions(d.breed);
+            syncPetSettingsModalLabels();
+            writePetSettingsForm(d);
+        });
+    }
+    var petHelp = document.getElementById('pet-settings-help');
+    if (petHelp) {
+        petHelp.addEventListener('mousedown', function(e) {
+            if (e.button !== 0) return;
+            e.preventDefault();
+            e.stopPropagation();
+            showToast(nixieT('pet.settings.help_toast'), true);
+        });
+    }
+    var petGear = document.getElementById('pet-settings-gear');
+    if (petGear) {
+        petGear.addEventListener('mousedown', function(e) {
+            if (e.button !== 0) return;
+            e.preventDefault();
+            e.stopPropagation();
+            if (window.ipc) window.ipc.postMessage('open_config_dir');
+        });
+    }
     var aboutSheet = document.getElementById('about-sheet');
     if (aboutSheet) {
         /* 只响应点在遮罩层本体（半透明空白区），点在面板上不关 */
@@ -1924,6 +2142,11 @@ document.addEventListener('DOMContentLoaded', function() {
             var cm = document.getElementById('context-menu');
             if (cm && !cm.hidden) {
                 closePixelMenu();
+                return;
+            }
+            var ps = document.getElementById('pet-settings-modal');
+            if (ps && !ps.hidden) {
+                closePetSettingsModal();
                 return;
             }
             var sh = document.getElementById('about-sheet');

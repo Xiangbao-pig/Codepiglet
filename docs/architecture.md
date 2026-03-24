@@ -54,10 +54,12 @@ nixie-pet 后台线程每帧：
     → 读 state.json
     →（仅 macOS）与 UDS 缓存按 seq 合并为较新的一份（merge_with_socket_latest）
     → PetBrain.tick（仅 HookState；新鲜度见下）
-    → PetOverlay.tick（Toast / 庆祝 / 投喂 / 遛猪占位等）
+    → PetOverlay.tick（Toast / 庆祝 / 投喂 / 遛猪状态与持久化等）
     → UserEvent → WebView（MoodChanged / MoodWithCelebration / FocusFileHint / Overlay / GitTip …）
 
 帧间隔：macOS 上为 recv_timeout(150ms) 与唤醒合并；非 macOS 为 thread::sleep(150ms)，仅依赖读盘。
+
+**`UserEvent`（`main.rs`）**：除上表外，还包括 **拖拽**（`DragWindow`）、**投喂/音效**反馈、**右键像素菜单**（`PixelMenuOpen`）、**退出**（`QuitPet`）、**遛猪**（`WalkPhaseSync` / `WalkResetCursor` / `WalkChaseSet`）等；与 `PetBrain` 并行，**不改变** mood 的推导逻辑。
 ```
 
 - **新鲜度**：`HookState::is_fresh()` — `ts > 0` 且距今不足 **10 秒**。不新鲜时，`PetBrain` 将 `activity` **视为** `idle` 参与映射（磁盘上的 `in_flight_tools` 在「不新鲜」时**不会**参与在飞融合，见 `pet_core.rs`）。
@@ -86,7 +88,7 @@ nixie-pet 后台线程每帧：
 
 **在飞融合（仅 hook 新鲜且 `in_flight_tools` 非空）**：按簇优先级取 mood — **run > write > web > search > think**（`pet_core.rs` 中 `fusion_priority_mood`）。
 
-**其它落盘文件**：`~/.nixie/overlay.json`（投喂冷却、音效开关等，Overlay 专用）；可选 **`~/.nixie/native.json`**（`native_pulse.rs`）供「用户打字」类 Toast，**不由 hook 写入**。
+**其它落盘文件**：`~/.nixie/overlay.json`（投喂冷却、音效开关、遛猪 `walk_enabled` 等，Overlay 专用）；可选 **`~/.nixie/native.json`**（`native_pulse.rs`）供「用户打字」类 Toast，**不由 hook 写入**。
 
 ---
 
@@ -96,20 +98,21 @@ nixie-pet 后台线程每帧：
 |------|------|
 | **`nixie-hook`** | 读 stdin JSON，维护 `NixieState`，原子写 `state.json`，macOS 上推 `pet.sock`。 |
 | **`hook_state.rs`** | 读 `state.json` → `HookState`；macOS 上 `merge_with_socket_latest`。 |
-| **`pet_core.rs`** | `PetMood`、`PetBrain::tick`；仅根据 `HookState` 更新 mood。 |
-| **`pet_overlay.rs`** | `PetOverlay::tick` → `OverlayEvent`。 |
+| **`pet_core.rs`** | `PetMood`、`PetBrain::tick`；仅根据 `HookState` 更新 mood（`SUCCESS_HOLD_MS` = 4.5s、`success_to_idle_confirm`、`note_user_poke` 等见源码）。 |
+| **`pet_overlay.rs`** | `PetOverlay::tick` → `OverlayEvent`（含遛猪 `WalkPhase`、`overlay.json` 中 `walk_enabled` 等）。 |
 | **`quotes.rs`** | `~/.nixie/quotes.json`；`subagent_depth > 0` 时可选用 `{mood}_subagent` 键。 |
-| **`main.rs`** | 后台线程驱动 brain + overlay；拼装 `UserEvent`（含 `focus_file`、子 Agent 副标题、`GitTip` 等）并派发 WebView。 |
+| **`main.rs`** | 后台线程驱动 brain + overlay；拼装 `UserEvent`（含 `focus_file`、子 Agent 副标题、`GitTip` 等）并派发 WebView；自定义协议 `poke` 等 → Core。 |
 | **`pet_socket_macos.rs`**（仅 macOS） | 监听 `pet.sock`，读行 JSON 更新缓存并唤醒主循环。 |
-| **`nyanpig.rs` + `nyanpig-*.html` / `nyanpig.css`、`nyanpig.js`** | 编译期 `concat!` 拼成一页 HTML 嵌入 WebView；**运行时**仍为单文档字符串，无外链脚本。 |
+| **`window_prefs.rs`** | 窗口外框位置持久化（与退出流程等配合）。 |
+| **`nyanpig.rs` + 片段资源** | 编译期 `concat!` 拼成一页 HTML 嵌入 WebView；**运行时**仍为单文档字符串，无外链脚本。 |
 
-**Nyan Pig 静态资源拆分（给其它模块对齐用）**：`nixie-pet/src/` 内为 `nyanpig-head.html`、`nyanpig.css`、`nyanpig-body.html`、`nyanpig.js`、`nyanpig-tail.html`，由 `nyanpig.rs` 唯一入口拼接，语义与原先单体 `nyanpig.html` 一致。**引用 DOM / 布局**时以 **`nyanpig-body.html`**（如 `#pet`）为准；**引用样式**以 **`nyanpig.css`** 为准；**引用前端逻辑**以 **`nyanpig.js`** 为准。`pet_pointer.rs` 等需与内圈尺寸一致时，说明里已指向 `nyanpig-body.html`。
+**Nyan Pig 拼接顺序（与 `nyanpig.rs` 一致）**：`nyanpig-head.html` → `nyanpig.css` → `nyanpig-body.html` → **`nyanpig-i18n.js`** → `nyanpig.js` → `nyanpig-tail.html`。**引用 DOM / 布局**以 **`nyanpig-body.html`**（如 `#pet`）为准；**样式**以 **`nyanpig.css`** 为准；**逻辑**以 **`nyanpig.js`** 为准（成功态保持时长等常量与 **`pet_core::SUCCESS_HOLD_MS`** 对齐，见 `nyanpig.js` 内 `CELEBRATION_ATTR_HOLD_MS`）。`pet_pointer.rs` 等需与内圈尺寸一致时，说明里已指向 `nyanpig-body.html`。
 
 ---
 
 ## 与 PetMood 正交的 UI 能力
 
-庆祝分档、投喂、Hook Toast、遛猪占位、音效开关等 **不新增 `PetMood`**。部分交互（例如番茄钟 UI）在 **Nyan Pig 前端片段**（上表）中实现，与 Rust Core 并行，不改变 `PetBrain` 输入。
+庆祝分档、投喂、Hook Toast、遛猪（菜单开关 + 阶段同步）、音效开关等 **不新增 `PetMood`**。部分交互（例如番茄钟 UI）在 **Nyan Pig 前端片段**（上表）中实现，与 Rust Core 并行，不改变 `PetBrain` 输入。
 
 ---
 
